@@ -8,7 +8,8 @@ option(DOCKER_BUILD "Build for Docker" OFF)
 
 add_executable(roommateapp
     src/main.cpp
-    src/UserOnSwipe.cpp
+    src/Matcher.cpp
+    src/DBManager.cpp
 )
 
 # Add local headers (Crow + Asio)
