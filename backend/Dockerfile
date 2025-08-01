@@ -49,7 +49,7 @@ COPY include/ ./include/
 
 # Configure + build
 RUN cmake -Bbuild -S. -DOCKER_BUILD=ON \
-    -DCMAKE_PREFIX_PATH="/usr/local;/usr/local/lib;/usr/local/lib/cmake;/usr/local/lib/cmake/libmongocxx-3.8.0;/usr/local/lib/cmake/libbsoncxx-3.8.0" \
+    -DCMAKE_PREFIX_PATH=/usr/local \
     && cmake --build build
 
 

@@ -31,12 +31,19 @@ int main() {
         std::string targetId = body["targetId"].s();
         bool isLike = body["isLike"].b();
         
+        if (type == "roommate") {
+            return crow::response(processRoommateSwipe(sourceId, targetId, isLike));
+        } else if (type == "room") {
+            return crow::response(processRoomSwipe(sourceId, targetId, isLike));
+        } else {
+            return crow::response(400, "Invalid type parameter.");
+        }
     });
 
 
     std::cout << "🟢 Backend starting on 0.0.0.0:18080\n";
 
-    test();
+    // test();
 
     app.bindaddr("0.0.0.0").port(18080).multithreaded().run();
 }

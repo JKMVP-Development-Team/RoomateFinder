@@ -6,8 +6,10 @@
 #include <iostream>
 #include <chrono>
 #include "DBManager.h"
-
-static DBManager dbManager(getenv("MONGO_URI") ? getenv("MONGO_URI") : "mongodb://localhost:27017");
+using bsoncxx::builder::stream::document;
+using bsoncxx::builder::stream::finalize;
+using bsoncxx::builder::stream::open_document;
+using bsoncxx::builder::stream::close_document;
 
 // --- Logic Functions ---
 double calculatePopularity(int received, int made, int matches) {
@@ -15,11 +17,6 @@ double calculatePopularity(int received, int made, int matches) {
 }
 
 void updateEntityPopularity(mongocxx::collection& entity_collection, const bsoncxx::oid& entityOid) {
-    using bsoncxx::builder::stream::document;
-    using bsoncxx::builder::stream::finalize;
-    using bsoncxx::builder::stream::open_document;
-    using bsoncxx::builder::stream::close_document;
-
     auto maybe_entity = entity_collection.find_one(document{} << "_id" << entityOid << finalize);
     if (!maybe_entity) {
         std::cerr << "Entity not found: " << entityOid.to_string() << std::endl;
@@ -32,7 +29,7 @@ void updateEntityPopularity(mongocxx::collection& entity_collection, const bsonc
     int currentMatches = entity_doc["matches"] ? entity_doc["matches"].get_int32().value : 0;
 
 
-    int newReceived = currentReceived++;
+    int newReceived = currentReceived + 1;
     double newPopularity = calculatePopularity(newReceived, currentMade, currentMatches);
 
     auto update_doc = document{}
@@ -48,9 +45,6 @@ void updateEntityPopularity(mongocxx::collection& entity_collection, const bsonc
 void updateEntityMatches(mongocxx::collection& entity_collection,
                         const bsoncxx::oid& sourceEntityOid,
                         const bsoncxx::oid& targetEntityOid) {
-    using bsoncxx::builder::stream::document;
-    using bsoncxx::builder::stream::finalize;
-
     auto source_entity = entity_collection.find_one(document{} << "_id" << sourceEntityOid << finalize);
     auto target_entity = entity_collection.find_one(document{} << "_id" << targetEntityOid << finalize);
 
@@ -60,15 +54,15 @@ void updateEntityMatches(mongocxx::collection& entity_collection,
     }
 
     auto update_source = document{}
-        << "$inc" << bsoncxx::builder::stream::open_document
+        << "$inc" << open_document
         << "matches" << 1
-        << bsoncxx::builder::stream::close_document
+        << close_document
         << finalize;
 
     auto update_target = document{}
-        << "$inc" << bsoncxx::builder::stream::open_document
+        << "$inc" << open_document
         << "matches" << 1
-        << bsoncxx::builder::stream::close_document
+        << close_document
         << finalize;
 
     entity_collection.update_one(document{} << "_id" << sourceEntityOid << finalize, std::move(update_source));
@@ -84,11 +78,13 @@ void handleEntitySwipe(mongocxx::collection& entity_collection,
                       const std::string& receivedField = "swipesReceived",
                       const std::string& matchesField = "matches",
                       const std::string& popularityField = "popularity") {
-    using bsoncxx::builder::stream::document;
-    using bsoncxx::builder::stream::finalize;
-    using bsoncxx::builder::stream::open_document;
-    using bsoncxx::builder::stream::close_document;
 
+    if (swipeExists(swipe_collection, sourceEntityOid, targetEntityOid)) {
+        std::cerr << "Swipe already exists from " << sourceEntityOid.to_string()
+                << " to " << targetEntityOid.to_string() << std::endl;
+        return;
+    }
+    
     auto timestamp = std::chrono::system_clock::now();
     auto timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         timestamp.time_since_epoch()).count();
@@ -133,37 +129,49 @@ void handleEntitySwipe(mongocxx::collection& entity_collection,
     }
 }
 
+bool swipeExists(mongocxx::collection& swipe_collection, const bsoncxx::oid& sourceEntityOid, const bsoncxx::oid& targetEntityOid) {
+
+    auto existing_swipe = swipe_collection.find_one(
+        document{}
+            << "sourceEntityId" << sourceEntityOid.to_string()
+            << "targetEntityId" << targetEntityOid.to_string()
+            << finalize
+    );
+    return existing_swipe ? true : false;
+}
+
 // --- High-level API Functions ---
 crow::json::wvalue getRecommendedRoommates() {
-    auto user_collection = dbManager.getUserCollection();
     crow::json::wvalue result;
+    auto& dbManager = getDbManager();
     result["roommates"] = crow::json::wvalue::list();
-
-    auto cursor = user_collection.find(
-        {},
-        mongocxx::options::find{}.sort(bsoncxx::builder::stream::document{} << "popularity" << -1 << bsoncxx::builder::stream::finalize).limit(10)
-    );
-
-    for (auto&& doc : cursor) {
-        crow::json::wvalue roommate;
-        roommate["id"] = doc["_id"].get_oid().value.to_string();
-        roommate["name"] = doc["name"] ? std::string(doc["name"].get_string().value) : "";
-        roommate["popularity"] = doc["popularity"] ? doc["popularity"].get_double().value : 0.0;
-        roommate["matches"] = doc["matches"] ? doc["matches"].get_int32().value : 0;
-        result["roommates"][result["roommates"].size()] = std::move(roommate);
+    try {
+        auto user_collection = dbManager.getUserCollection();
+        auto cursor = user_collection.find({});
+        for (auto&& doc : cursor) {
+            crow::json::wvalue roommate;
+            roommate["id"] = doc["_id"].get_oid().value.to_string();
+            roommate["username"] = doc["username"] ? std::string(doc["username"].get_string().value) : "";
+            roommate["popularity"] = doc["popularity"] ? doc["popularity"].get_double().value : 0.0;
+            roommate["matches"] = doc["matches"] ? doc["matches"].get_int32().value : 0;
+            result["roommates"][result["roommates"].size()] = std::move(roommate);
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Exception: " << e.what() << std::endl;
+        result["error"] = "Backend error: " + std::string(e.what());
     }
-
     return result;
 }
 
 crow::json::wvalue getRecommendedRooms() {
+    auto& dbManager = getDbManager();
     auto room_collection = dbManager.getRoomCollection();
     crow::json::wvalue result;
     result["rooms"] = crow::json::wvalue::list();
 
     auto cursor = room_collection.find(
         {},
-        mongocxx::options::find{}.sort(bsoncxx::builder::stream::document{} << "popularity" << -1 << bsoncxx::builder::stream::finalize).limit(10)
+        mongocxx::options::find{}.sort(document{} << "popularity" << -1 << finalize).limit(10)
     );
 
     for (auto&& doc : cursor) {
@@ -178,6 +186,7 @@ crow::json::wvalue getRecommendedRooms() {
 }
 
 crow::json::wvalue processRoommateSwipe(const std::string& sourceId, const std::string& targetId, bool isLike) {
+    auto& dbManager = getDbManager();
     auto user_collection = dbManager.getUserCollection();
     auto user_swipe_collection = dbManager.getUserSwipeCollection();
     handleEntitySwipe(user_collection, user_swipe_collection,
@@ -186,6 +195,7 @@ crow::json::wvalue processRoommateSwipe(const std::string& sourceId, const std::
 }
 
 crow::json::wvalue processRoomSwipe(const std::string& sourceId, const std::string& targetId, bool isLike) {
+    auto& dbManager = getDbManager();
     auto room_collection = dbManager.getRoomCollection();
     auto room_swipe_collection = dbManager.getRoomSwipeCollection();
     handleEntitySwipe(room_collection, room_swipe_collection,
@@ -197,18 +207,17 @@ crow::json::wvalue processRoomSwipe(const std::string& sourceId, const std::stri
 int test() {
     try
     {
-        DBManager dbManager(getenv("MONGO_URI"));
-
+        auto& dbManager = getDbManager();
         // --- Testing functions below ---
         auto entity_collection = dbManager.getUserCollection();
         auto swipe_collection = dbManager.getUserSwipeCollection();
 
-        bsoncxx::builder::stream::document entity_doc_builder1, entity_doc_builder2;
+        document entity_doc_builder1, entity_doc_builder2;
         entity_doc_builder1 << "name" << "EntityA" << "swipesMade" << 0 << "swipesReceived" << 0 << "matches" << 0 << "popularity" << 0.0;
         entity_doc_builder2 << "name" << "EntityB" << "swipesMade" << 0 << "swipesReceived" << 0 << "matches" << 0 << "popularity" << 0.0;
 
-        auto result1 = entity_collection.insert_one(entity_doc_builder1 << bsoncxx::builder::stream::finalize);
-        auto result2 = entity_collection.insert_one(entity_doc_builder2 << bsoncxx::builder::stream::finalize);
+        auto result1 = entity_collection.insert_one(entity_doc_builder1 << finalize);
+        auto result2 = entity_collection.insert_one(entity_doc_builder2 << finalize);
 
         bsoncxx::oid sourceEntityOid, targetEntityOid;
         if (result1 && result1->inserted_id().type() == bsoncxx::type::k_oid) {
@@ -235,8 +244,8 @@ int test() {
         std::cout << "EntityA liked EntityB." << std::endl;
 
         // Check matches count for both entities (should be 0)
-        auto entityA = entity_collection.find_one(bsoncxx::builder::stream::document{} << "_id" << sourceEntityOid << bsoncxx::builder::stream::finalize);
-        auto entityB = entity_collection.find_one(bsoncxx::builder::stream::document{} << "_id" << targetEntityOid << bsoncxx::builder::stream::finalize);
+        auto entityA = entity_collection.find_one(document{} << "_id" << sourceEntityOid << finalize);
+        auto entityB = entity_collection.find_one(document{} << "_id" << targetEntityOid << finalize);
         int matchesA = entityA && entityA->view()["matches"] ? entityA->view()["matches"].get_int32().value : 0;
         int matchesB = entityB && entityB->view()["matches"] ? entityB->view()["matches"].get_int32().value : 0;
         std::cout << "Matches after first like: EntityA=" << matchesA << ", EntityB=" << matchesB << std::endl;
@@ -246,8 +255,8 @@ int test() {
         std::cout << "EntityB liked EntityA." << std::endl;
 
         // Check matches count for both entities (should be 1)
-        entityA = entity_collection.find_one(bsoncxx::builder::stream::document{} << "_id" << sourceEntityOid << bsoncxx::builder::stream::finalize);
-        entityB = entity_collection.find_one(bsoncxx::builder::stream::document{} << "_id" << targetEntityOid << bsoncxx::builder::stream::finalize);
+        entityA = entity_collection.find_one(document{} << "_id" << sourceEntityOid << finalize);
+        entityB = entity_collection.find_one(document{} << "_id" << targetEntityOid << finalize);
         matchesA = entityA && entityA->view()["matches"] ? entityA->view()["matches"].get_int32().value : 0;
         matchesB = entityB && entityB->view()["matches"] ? entityB->view()["matches"].get_int32().value : 0;
         std::cout << "Matches after mutual like: EntityA=" << matchesA << ", EntityB=" << matchesB << std::endl;

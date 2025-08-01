@@ -17,3 +17,5 @@ private:
     mongocxx::database user_db_;
     mongocxx::database room_db_;
 };
+
+DBManager& getDbManager();
