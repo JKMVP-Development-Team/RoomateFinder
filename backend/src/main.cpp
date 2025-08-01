@@ -1,5 +1,5 @@
 #include "crow/crow_all.h"
-#include "UserOnSwipe.cpp"
+#include "UserOnSwipe.h"
 
 int main() {
     crow::SimpleApp app;

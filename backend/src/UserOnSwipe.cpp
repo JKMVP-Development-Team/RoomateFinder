@@ -1,18 +1,22 @@
 #include <bsoncxx/json.hpp>
+#include <bsoncxx/builder/stream/document.hpp>
 #include <mongocxx/client.hpp>
 #include <mongocxx/instance.hpp>
-#include <crow.h/crow_all.h>
+#include <crow/crow_all.h>
 #include <cstdlib>
 #include <iostream>
+#include <chrono>
 
 double calculatePopularity(int swipeReceived, int swipeGiven) {
-    return static_cast<double>(swipesReceived) / std::max(swipeGiven, 1);
+    return static_cast<double>(swipeReceived) / std::max(swipeGiven, 1);
 }
 
-void updateUserPopularity(mongocxx::collection& collection, const std::string& userId) {
+void updateUserPopularity(mongocxx::collection& collection, const std::string& userId, int swipesReceivedIncrement = 0) {
 
     using bsoncxx::builder::stream::document;
     using bsoncxx::builder::stream::finalize;
+    using bsoncxx::builder::stream::open_document;
+    using bsoncxx::builder::stream::close_document;
 
 
     auto maybe_user = collection.find_one(document{} << "userId" << userId << finalize);
@@ -27,19 +31,67 @@ void updateUserPopularity(mongocxx::collection& collection, const std::string& u
     int currentSwipesMade = user_doc["swipesMade"] ? user_doc["swipesMade"].get_int32().value : 0;
     int currentSwipesReceived = user_doc["swipesReceived"] ? user_doc["swipesReceived"].get_int32().value : 0;
 
-    int newSwipesMade = currentSwipesMade + swipesMadeIncrement;
     int newSwipesReceived = currentSwipesReceived + swipesReceivedIncrement;
-    double newPopularity = calculatePopularity(newSwipesReceived, newSwipesMade);
+    double newPopularity = calculatePopularity(newSwipesReceived, currentSwipesMade);
 
     auto update_doc = document{}
         << "$set" << open_document
-        << "swipesMade" << newSwipesMade
         << "swipesReceived" << newSwipesReceived
         << "popularity" << newPopularity
         << close_document
         << finalize;
 
-    usersCollection.update_one(document{} << "username" << username << finalize, update_doc);
+    collection.update_one(document{} << "userId" << userId << finalize, std::move(update_doc));
+}
+
+void handleUserSwipe(mongocxx::database& db, 
+                    const std::string& sourceUserId, 
+                    const std::string& targetUserId, 
+                    bool isLike) {
+    
+    auto users_collection = db["users"];
+    auto swipes_collection = db["swipes"];
+    
+    using bsoncxx::builder::stream::document;
+    using bsoncxx::builder::stream::finalize;
+    using bsoncxx::builder::stream::open_document;
+    using bsoncxx::builder::stream::close_document;
+    
+    // 1. Record the swipe in swipes collection
+    auto timestamp = std::chrono::system_clock::now();
+    auto timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        timestamp.time_since_epoch()).count();
+    
+    auto swipe_doc = document{}
+        << "sourceUserId" << sourceUserId
+        << "targetUserId" << targetUserId
+        << "isLike" << isLike
+        << "timestamp" << bsoncxx::types::b_date{std::chrono::milliseconds{timestamp_ms}}
+        << finalize;
+    
+    swipes_collection.insert_one(swipe_doc.view());
+    
+    // 2. Update source user's swipe count
+    auto source_user = users_collection.find_one(document{} << "userId" << sourceUserId << finalize);
+    if (!source_user) {
+        std::cerr << "Source user not found: " << sourceUserId << std::endl;
+        return;
+    }
+    
+    auto source_doc = source_user->view();
+    int currentSwipesMade = source_doc["swipesMade"] ? source_doc["swipesMade"].get_int32().value : 0;
+    
+    auto update_source = document{}
+        << "$set" << open_document
+        << "swipesMade" << (currentSwipesMade + 1)
+        << close_document
+        << finalize;
+    users_collection.update_one(document{} << "userId" << sourceUserId << finalize, std::move(update_source));
+    
+    // 3. If it's a like, update target user's popularity
+    if (isLike) {
+        updateUserPopularity(users_collection, targetUserId, 1);
+    }
 }
 
 
@@ -47,12 +99,11 @@ int test()
 { 
   try
   {
-    const char* path_value = std::getenv("backend/.env")
-    ;
-    if (path_value != nullptr) {
-        std::cout << "PATH: " << path_value << std::endl;
+    const char* mongo_uri = std::getenv("MONGODB_URI");
+    if (mongo_uri != nullptr) {
+        std::cout << "MONGODB_URI: " << mongo_uri << std::endl;
     } else {
-        std::cout << "PATH environment variable is not set." << std::endl;
+        std::cout << "MONGODB_URI environment variable is not set." << std::endl;
     }
 
     mongocxx::instance inst{};
