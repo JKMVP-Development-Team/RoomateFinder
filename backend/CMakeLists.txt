@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 
 add_executable(roommateapp
     src/main.cpp
+    src/UserOnSwipe.cpp
 )
 
 # Add local headers (Crow + Asio)

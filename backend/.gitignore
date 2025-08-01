@@ -17,3 +17,6 @@ Makefile
 
 # vcpkg specific (optional)
 .vscode/
+
+#.env
+.env
