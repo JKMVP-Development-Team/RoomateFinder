@@ -16,6 +16,18 @@ double calculatePopularity(int received, int made, int matches) {
     return static_cast<double>(received + 2 * matches) / std::max(made, 1);
 }
 
+bool swipeExists(mongocxx::collection& swipe_collection, const bsoncxx::oid& sourceEntityOid, const bsoncxx::oid& targetEntityOid) {
+
+    auto existing_swipe = swipe_collection.find_one(
+        document{}
+            << "sourceEntityId" << sourceEntityOid.to_string()
+            << "targetEntityId" << targetEntityOid.to_string()
+            << finalize
+    );
+    return existing_swipe ? true : false;
+}
+
+
 void updateEntityPopularity(mongocxx::collection& entity_collection, const bsoncxx::oid& entityOid) {
     auto maybe_entity = entity_collection.find_one(document{} << "_id" << entityOid << finalize);
     if (!maybe_entity) {
@@ -84,7 +96,7 @@ void handleEntitySwipe(mongocxx::collection& entity_collection,
                 << " to " << targetEntityOid.to_string() << std::endl;
         return;
     }
-    
+
     auto timestamp = std::chrono::system_clock::now();
     auto timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         timestamp.time_since_epoch()).count();
@@ -129,16 +141,6 @@ void handleEntitySwipe(mongocxx::collection& entity_collection,
     }
 }
 
-bool swipeExists(mongocxx::collection& swipe_collection, const bsoncxx::oid& sourceEntityOid, const bsoncxx::oid& targetEntityOid) {
-
-    auto existing_swipe = swipe_collection.find_one(
-        document{}
-            << "sourceEntityId" << sourceEntityOid.to_string()
-            << "targetEntityId" << targetEntityOid.to_string()
-            << finalize
-    );
-    return existing_swipe ? true : false;
-}
 
 // --- High-level API Functions ---
 crow::json::wvalue getRecommendedRoommates() {
