@@ -1,4 +1,3 @@
-#include <bsoncxx/json.hpp>
 #include <bsoncxx/builder/stream/document.hpp>
 #include <mongocxx/client.hpp>
 #include <mongocxx/instance.hpp>
@@ -11,7 +10,7 @@ double calculatePopularity(int swipeReceived, int swipeGiven) {
     return static_cast<double>(swipeReceived) / std::max(swipeGiven, 1);
 }
 
-void updateUserPopularity(mongocxx::collection& collection, const std::string& userId, int swipesReceivedIncrement = 0) {
+void updateUserPopularity(mongocxx::collection& collection, const bsoncxx::oid& userOid, int swipesReceivedIncrement = 0) {
 
     using bsoncxx::builder::stream::document;
     using bsoncxx::builder::stream::finalize;
@@ -19,10 +18,10 @@ void updateUserPopularity(mongocxx::collection& collection, const std::string& u
     using bsoncxx::builder::stream::close_document;
 
 
-    auto maybe_user = collection.find_one(document{} << "userId" << userId << finalize);
+    auto maybe_user = collection.find_one(document{} << "_id" << userOid << finalize);
 
     if (!maybe_user) {
-        std::cerr << "User not found: " << userId << std::endl;
+        std::cerr << "User not found: " << userOid.to_string() << std::endl;
         return;
     }  
 
@@ -41,12 +40,12 @@ void updateUserPopularity(mongocxx::collection& collection, const std::string& u
         << close_document
         << finalize;
 
-    collection.update_one(document{} << "userId" << userId << finalize, std::move(update_doc));
+    collection.update_one(document{} << "_id" << userOid << finalize, std::move(update_doc));
 }
 
 void handleUserSwipe(mongocxx::database& db, 
-                    const std::string& sourceUserId, 
-                    const std::string& targetUserId, 
+                    const bsoncxx::oid& sourceUserOid,
+                    const bsoncxx::oid& targetUserOid,
                     bool isLike) {
     
     auto users_collection = db["users"];
@@ -57,24 +56,21 @@ void handleUserSwipe(mongocxx::database& db,
     using bsoncxx::builder::stream::open_document;
     using bsoncxx::builder::stream::close_document;
     
-    // 1. Record the swipe in swipes collection
     auto timestamp = std::chrono::system_clock::now();
     auto timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         timestamp.time_since_epoch()).count();
     
     auto swipe_doc = document{}
-        << "sourceUserId" << sourceUserId
-        << "targetUserId" << targetUserId
-        << "isLike" << isLike
+        << "sourceUserId" << sourceUserOid.to_string()
+        << "targetUserId" << targetUserOid.to_string()
         << "timestamp" << bsoncxx::types::b_date{std::chrono::milliseconds{timestamp_ms}}
         << finalize;
     
     swipes_collection.insert_one(swipe_doc.view());
     
-    // 2. Update source user's swipe count
-    auto source_user = users_collection.find_one(document{} << "userId" << sourceUserId << finalize);
+    auto source_user = users_collection.find_one(document{} << "_id" << sourceUserOid << finalize);
     if (!source_user) {
-        std::cerr << "Source user not found: " << sourceUserId << std::endl;
+        std::cerr << "Source user not found: " << sourceUserOid.to_string() << std::endl;
         return;
     }
     
@@ -86,11 +82,10 @@ void handleUserSwipe(mongocxx::database& db,
         << "swipesMade" << (currentSwipesMade + 1)
         << close_document
         << finalize;
-    users_collection.update_one(document{} << "userId" << sourceUserId << finalize, std::move(update_source));
+    users_collection.update_one(document{} << "_id" << sourceUserOid << finalize, std::move(update_source));
     
-    // 3. If it's a like, update target user's popularity
     if (isLike) {
-        updateUserPopularity(users_collection, targetUserId, 1);
+        updateUserPopularity(users_collection, targetUserOid, 1);
     }
 }
 
@@ -104,29 +99,62 @@ int test()
         std::cout << "MONGODB_URI: " << mongo_uri << std::endl;
     } else {
         std::cout << "MONGODB_URI environment variable is not set." << std::endl;
+        return 1;
     }
 
     mongocxx::instance inst{};
-  
-    const auto uri = mongocxx::uri{std::getenv("MONGODB_URI")};
-  
+    const auto uri = mongocxx::uri{mongo_uri};
     mongocxx::options::client client_options;
     const auto api = mongocxx::options::server_api{ mongocxx::options::server_api::version::k_version_1 };
     client_options.server_api_opts(api);
-  
-    // Setup the connection and get a handle on the "admin" database.
+
     mongocxx::client conn{ uri, client_options };
     mongocxx::database db = conn["admin"];
-    
+
     // Ping the database.
     const auto ping_cmd = bsoncxx::builder::basic::make_document(bsoncxx::builder::basic::kvp("ping", 1));
     db.run_command(ping_cmd.view());
     std::cout << "Pinged your deployment. You successfully connected to MongoDB!" << std::endl;
-  }
-  catch (const std::exception& e) 
-  {
-    std::cout<< "Exception: " << e.what() << std::endl;
-  }
 
-  return 0;
+    // --- Testing functions below ---
+    auto users_collection = db["users"];
+    users_collection.delete_many({});
+    auto swipes_collection = db["swipes"];
+    swipes_collection.delete_many({}); // Clear existing data for testing
+
+            bsoncxx::builder::stream::document user_doc_builder1, user_doc_builder2;
+        user_doc_builder1 << "swipesMade" << 0 << "swipesReceived" << 0 << "popularity" << 0.0;
+        user_doc_builder2 << "swipesMade" << 0 << "swipesReceived" << 0 << "popularity" << 0.0;
+
+        auto result1 = users_collection.insert_one(user_doc_builder1 << bsoncxx::builder::stream::finalize);
+        auto result2 = users_collection.insert_one(user_doc_builder2 << bsoncxx::builder::stream::finalize);
+
+        bsoncxx::oid sourceUserOid, targetUserOid;
+        // Check if the insertions were successful and retrieve the OIDs
+        if (result1 && result1->inserted_id().type() == bsoncxx::type::k_oid) {
+            sourceUserOid = result1->inserted_id().get_oid().value;
+            std::cout << "Inserted source user with _id: " << sourceUserOid.to_string() << std::endl;
+        }
+        if (result2 && result2->inserted_id().type() == bsoncxx::type::k_oid) {
+            targetUserOid = result2->inserted_id().get_oid().value;
+            std::cout << "Inserted target user with _id: " << targetUserOid.to_string() << std::endl;
+        }
+
+        std::cout << "Inserted test users." << std::endl;
+
+        // Test handleUserSwipe (simulate a like swipe)
+        handleUserSwipe(db, sourceUserOid, targetUserOid, true);
+        std::cout << "handleUserSwipe executed (like)." << std::endl;
+
+        // Test handleUserSwipe (simulate a dislike swipe)
+        handleUserSwipe(db, sourceUserOid, targetUserOid, false);
+        std::cout << "handleUserSwipe executed (dislike)." << std::endl;
+
+    }
+    catch (const std::exception& e)
+    {
+        std::cout << "Exception: " << e.what() << std::endl;
+        return 1;
+    }
+    return 0;
 }
