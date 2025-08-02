@@ -315,13 +315,21 @@ crow::json::wvalue getRecommendedRoommates(const std::string& currentUserId) {
 
     auto cursor = user_collection.find({});
     std::vector<std::pair<double, crow::json::wvalue>> scoredUsers;
-
+    const double maxDistanceKm = 50.0;
     for (auto&& doc : cursor) {
         try {
+            if (doc["_id"].get_oid().value.to_string() == currentUserId) {
+                continue; 
+            }
             double userLat = doc["lat"].get_double().value;
             double userLong = doc["long"].get_double().value;
 
             double distance = haversine(currentLat, currentLong, userLat, userLong);
+            
+            if (distance > maxDistanceKm) {
+                continue;
+            }
+
             double normalizedDistance = normalizeProximity(distance);
 
             double popularity = doc["popularity"] ? doc["popularity"].get_double().value : 0.0;
@@ -343,6 +351,15 @@ crow::json::wvalue getRecommendedRoommates(const std::string& currentUserId) {
             std::cerr << "Exception for doc: " << bsoncxx::to_json(doc) << "\nError: " << e.what() << std::endl;
         }
     }
+
+    std::sort(scoredUsers.begin(), scoredUsers.end(), [](const auto& a, const auto& b) {
+        return a.first > b.first;
+    });
+
+    for (size_t i = 0; i < std::min(scoredUsers.size(), size_t(10)); ++i) {
+        result["roommates"][i] = std::move(scoredUsers[i].second);
+    }
+
     return result;
 }
 
@@ -356,7 +373,6 @@ crow::json::wvalue getRecommendedRooms(const std::string& currentUserId) {
     crow::json::wvalue result;
     auto& dbManager = getDbManager();
     auto user_collection = dbManager.getUserCollection();
-
     auto current_user_doc = user_collection.find_one(document{} << "_id" << bsoncxx::oid(currentUserId) << finalize);
     if (!current_user_doc) {
         result["error"] = "Current user not found.";
@@ -372,13 +388,26 @@ crow::json::wvalue getRecommendedRooms(const std::string& currentUserId) {
     auto room_collection = dbManager.getRoomCollection();
     result["rooms"] = crow::json::wvalue::list();
     auto cursor = room_collection.find({});
+    const double maxDistanceKm = 50.0;
     try {
         for (auto&& doc : cursor) {
+            try {
+                if (doc["ownerId"] && doc["ownerId"].type() == bsoncxx::type::k_oid) {
+                    auto ownerId = doc["ownerId"].get_oid().value;
+                    if (ownerId.to_string() == currentUserId) {
+                        continue;
+                    }
+                }
                 double roomLat = doc["lat"].get_double().value;
                 double roomLong = doc["long"].get_double().value;
 
                 double distance = haversine(currentLat, currentLong, roomLat, roomLong);
-                double normalizedDistance = normalizeProximity(distance);
+                
+                if (distance > maxDistanceKm) {
+                    continue;
+                }
+
+                double normalizedDistance = normalizeProximity(distance, maxDistanceKm);
 
                 double popularity = doc["popularity"] ? doc["popularity"].get_double().value : 0.0;
                 double normalizedPopularity = normalizePopularity(popularity);
@@ -395,11 +424,24 @@ crow::json::wvalue getRecommendedRooms(const std::string& currentUserId) {
                 room["phone"] = doc["phone"] ? std::string(doc["phone"].get_string().value) : "";
                 room["budget"] = doc["budget"] ? std::string(doc["budget"].get_string().value) : "0.0";
                 room["popularity"] = normalizedPopularity;
+                room["distance"] = distance;
                 result["rooms"][result["rooms"].size()] = std::move(room);
+            } catch (const std::exception& e) {
+                std::cerr << "Exception for doc: " << bsoncxx::to_json(doc) << "\nError: " << e.what() << std::endl;
+                result["error"] = "Backend error: " + std::string(e.what());
+            }
         }
     } catch (const std::exception& e) {
         std::cerr << "Error fetching recommended rooms: " << e.what() << std::endl;
         result["error"] = "Backend error: " + std::string(e.what());
+    }
+
+    std::sort(scoredRooms.begin(), scoredRooms.end(), [](const auto& a, const auto& b) {
+        return a.first > b.first;
+    });
+
+    for (size_t i = 0; i < std::min(scoredRooms.size(), size_t(10)); ++i) {
+        result["rooms"][i] = std::move(scoredRooms[i].second);
     }
 
     return result;
