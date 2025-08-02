@@ -24,5 +24,6 @@ double normalizePopularity(double popularity, double minPopularity = 0.0, double
 crow::json::wvalue getRecommendedRoommates(const std::string& currentUserId);
 crow::json::wvalue getRecommendedRooms(const std::string& currentUserId);
 crow::json::wvalue getUsersWhoLikedRoom(const std::string& roomId);
+crow::json::wvalue getUsersWhoLiked(const std::string& userId);
 crow::json::wvalue processRoommateSwipe(const std::string& sourceId, const std::string& targetId, bool isLike);
 crow::json::wvalue processRoomSwipe(const std::string& sourceId, const std::string& targetId, bool isLike);

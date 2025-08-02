@@ -9,16 +9,20 @@ int main() {
         return crow::response("Roommate Finder Backend is running.");
     });
 
-    CROW_ROUTE(app, "/api/recommend").methods("GET"_method)
+    // Get recommended roommates for a user
+    CROW_ROUTE(app, "/api/roommate/recommend").methods("GET"_method)
     ([](const crow::request& req){
-        auto type = req.url_params.get("type");
-        if (type && std::string(type) == "roommate") {
-            return crow::response(getRecommendedRoommates());
-        } else if (type && std::string(type) == "room") {
-            return crow::response(getRecommendedRooms());
-        } else {
-            return crow::response(400, "Invalid type parameter.");
-        }
+        auto userId = req.url_params.get("userId");
+        if (!userId) return crow::response(400, "Missing userId parameter.");
+        return crow::response(getRecommendedRoommates(userId));
+    });
+
+    // Get recommended rooms for a user
+    CROW_ROUTE(app, "/api/room/recommend").methods("GET"_method)
+    ([](const crow::request& req){
+        auto userId = req.url_params.get("userId");
+        if (!userId) return crow::response(400, "Missing userId parameter.");
+        return crow::response(getRecommendedRooms(userId));
     });
 
     CROW_ROUTE(app, "/api/swipe").methods("POST"_method)
@@ -40,6 +44,21 @@ int main() {
         }
     });
 
+    // Get users who liked the room
+    CROW_ROUTE(app, "/api/room/likes").methods("GET"_method)
+    ([](const crow::request& req){
+        auto roomId = req.url_params.get("roomId");
+        if (!roomId) return crow::response(400, "Missing roomId parameter.");
+        return crow::response(getUsersWhoLikedRoom(roomId));
+    });
+
+    // Get users who liked the roommate
+    CROW_ROUTE(app, "/api/user/liked-rooms").methods("GET"_method)
+    ([](const crow::request& req){
+        auto userId = req.url_params.get("userId");
+        if (!userId) return crow::response(400, "Missing userId parameter.");
+        return crow::response(getUsersWhoLiked(userId));
+    });
 
     std::cout << "🟢 Backend starting on 0.0.0.0:18080\n";
 
