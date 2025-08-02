@@ -18,3 +18,4 @@ private:
 };
 
 DBManager& getDbManager();
+crow::json::wvalue fetchUserInfo(const std::string& userId);

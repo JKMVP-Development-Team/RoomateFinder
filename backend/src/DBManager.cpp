@@ -1,3 +1,4 @@
+#include "ParseUser.cpp"
 #include "DBManager.h"
 #include <mongocxx/instance.hpp>
 
@@ -15,4 +16,12 @@ DBManager& getDbManager() {
     static mongocxx::instance inst{};
     static DBManager dbManager(getenv("MONGODB_URI") ? getenv("MONGODB_URI") : "mongodb://localhost:27017");
     return dbManager;
+}
+
+crow::json::wvalue fetchUserInfo(const std::string& userId) {
+    auto& dbManager = getDbManager();
+    auto user_collection = dbManager.getUserCollection();
+
+    ParseUser parser(user_collection);
+    return parser.getUserInfo(userId);
 }
