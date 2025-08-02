@@ -16,6 +16,11 @@ using bsoncxx::builder::stream::close_document;
 
 // --- Logic Functions ---
 
+/**
+ * Normalizes a budget value to a range of 0.0 to 1.0.
+ * @param budget The budget value to normalize.
+ * @return A normalized budget value between 0.0 and 1.0.
+ */
 // TODO: Adjust the min and max budget values
 double normalizeBudget(double budget) {
     double minBudget = 500.0;
@@ -23,17 +28,39 @@ double normalizeBudget(double budget) {
     return (budget - minBudget) / (maxBudget - minBudget); // Result: 0.0 to 1.0
 }
 
+/**
+ * Normalizes a proximity score based on the distance in kilometers.
+ * @param distanceKm The distance in kilometers.
+ * @param maxDistanceKm The maximum distance to consider for normalization.
+ * @return A normalized proximity score between 0.0 (far) and 1.0 (very close).
+ */
 // TODO: Adjust the max distance value 
 double normalizeProximity(double distanceKm, double maxDistanceKm = 50.0) {
     double score = 1.0 - std::min(distanceKm, maxDistanceKm) / maxDistanceKm;
     return score; // 1.0 (very close) to 0.0 (far)
 }
 
+/**
+ * Normalizes a popularity score to a range of 0.0 to 1.0.
+ * @param popularity The raw popularity score.
+ * @param minPopularity The minimum possible popularity score.
+ * @param maxPopularity The maximum possible popularity score.
+ * @return A normalized popularity score between 0.0 and 1.0.
+ */
 double normalizePopularity(double popularity, double minPopularity = -50, double maxPopularity = 3200) {
     if (maxPopularity == minPopularity) return 0.0;
     return std::max(0.0, std::min(1.0, (popularity - minPopularity) / (maxPopularity - minPopularity)));
 }
 
+/**
+ * Calculates a popularity score based on various factors.
+ * @param received Number of swipes received.
+ * @param made Number of swipes made.
+ * @param matches Number of matches.
+ * @param budget The budget of the entity.
+ * @param proximity The proximity score of the entity.
+ * @return A calculated popularity score.
+ */
 double calculatePopularity(int received, int made, int matches, double budget, double proximity) {
     // Adjust weights for each factor based on their importance
     // TODO: Train the data based on data to a machine learning model for a popularity score
@@ -51,6 +78,11 @@ double calculatePopularity(int received, int made, int matches, double budget, d
          + w_proximity * proximity;
 }
 
+/**
+ * Fetches recommended roommates for the current user based on their preferences.
+ * @param currentUserId The ID of the current user.
+ * @return A JSON object containing recommended roommates.
+ */
 bool swipeExists(mongocxx::collection& swipe_collection, const bsoncxx::oid& sourceEntityOid, const bsoncxx::oid& targetEntityOid) {
     auto swipe_doc = swipe_collection.find_one(document{} << "sourceEntityId" << sourceEntityOid.to_string() << finalize);
     if (!swipe_doc) return false;
@@ -69,6 +101,15 @@ bool swipeExists(mongocxx::collection& swipe_collection, const bsoncxx::oid& sou
 }
 
 /// yeah i didn't do this function chat just gave this to me
+/** 
+ * Haversine formula to calculate the distance between two points on the Earth
+ * given their latitude and longitude in degrees.
+ * @param lat1 Latitude of point 1
+ * @param lon1 Longitude of point 1
+ * @param lat2 Latitude of point 2
+ * @param lon2 Longitude of point 2
+ * @return Distance in kilometers
+ */
 double haversine(double lat1, double lon1, double lat2, double lon2) {
     const double R = 6371.0; // Earth radius in km
     double dLat = (lat2 - lat1) * M_PI / 180.0;
@@ -80,6 +121,12 @@ double haversine(double lat1, double lon1, double lat2, double lon2) {
     return R * c; // Distance in km
 }
 
+/**
+ * Updates the popularity score of an entity (user or room) based on swipes received.
+ * @param entity_collection The collection of entities (users or rooms).
+ * @param entityOid The OID of the entity to update.
+ * @param proximity The proximity score of the entity.
+ */
 void updateEntityPopularity(mongocxx::collection& entity_collection, const bsoncxx::oid& entityOid, double proximity = 0.0) {
     auto maybe_entity = entity_collection.find_one(document{} << "_id" << entityOid << finalize);
     if (!maybe_entity) {
@@ -116,6 +163,12 @@ void updateEntityPopularity(mongocxx::collection& entity_collection, const bsonc
     entity_collection.update_one(document{} << "_id" << entityOid << finalize, std::move(update_doc));
 }
 
+/**
+ * Updates the matches count for both entities involved in a swipe.
+ * @param entity_collection The collection of entities (users or rooms).
+ * @param sourceEntityOid The OID of the source entity.
+ * @param targetEntityOid The OID of the target entity.
+ */
 void updateEntityMatches(mongocxx::collection& entity_collection,
                         const bsoncxx::oid& sourceEntityOid,
                         const bsoncxx::oid& targetEntityOid) {
@@ -143,16 +196,21 @@ void updateEntityMatches(mongocxx::collection& entity_collection,
     entity_collection.update_one(document{} << "_id" << targetEntityOid << finalize, std::move(update_target));
 }
 
+/**
+ * Handles the swipe action between two entities (users or rooms).
+ * @param source_collection The collection of the source entity (user or room).
+ * @param target_collection The collection of the target entity (user or room).
+ * @param swipe_collection The collection for storing swipe actions.
+ * @param sourceEntityOid The OID of the source entity.
+ * @param targetEntityOid The OID of the target entity.
+ * @param isLike True if it's a like, false if it's a dislike.
+ */
 void handleEntitySwipe(mongocxx::collection& source_collection,
                         mongocxx::collection& target_collection,
                         mongocxx::collection& swipe_collection,
                         const bsoncxx::oid& sourceEntityOid,
                         const bsoncxx::oid& targetEntityOid,
-                        bool isLike,
-                        const std::string& madeField = "swipesMade",
-                        const std::string& receivedField = "swipesReceived",
-                        const std::string& matchesField = "matches",
-                        const std::string& popularityField = "popularity") {
+                        bool isLike) {
 
     if (swipeExists(swipe_collection, sourceEntityOid, targetEntityOid)) {
         std::cerr << "Swipe already exists from " << sourceEntityOid.to_string()
@@ -199,11 +257,11 @@ void handleEntitySwipe(mongocxx::collection& source_collection,
     }
 
     auto source_doc = source_entity->view();
-    int currentMade = source_doc[madeField] ? source_doc[madeField].get_int32().value : 0;
+    int currentMade = source_doc["swipesMade"] ? source_doc["swipesMade"].get_int32().value : 0;
 
     auto update_source = document{}
         << "$set" << open_document
-        << madeField << (currentMade + 1)
+        << "swipesMade" << (currentMade + 1)
         << close_document
         << finalize;
     source_collection.update_one(document{} << "_id" << sourceEntityOid << finalize, std::move(update_source));
@@ -232,37 +290,126 @@ void handleEntitySwipe(mongocxx::collection& source_collection,
 
 
 // --- High-level API Functions ---
-crow::json::wvalue getRecommendedRoommates() {
+
+/*
+    * Fetches recommended roommates for the current user based on proximity and popularity.
+    * The roommates are scored based on their distance from the user's location and their popularity.
+    * @param currentUserId The ID of the current user.
+    * @return A JSON object containing the recommended roommates.
+*/
+crow::json::wvalue getRecommendedRoommates(const std::string& currentUserId) {
     crow::json::wvalue result;
     auto& dbManager = getDbManager();
-    result["roommates"] = crow::json::wvalue::list();
-    try {
-        auto user_collection = dbManager.getUserCollection();
-        auto cursor = user_collection.find(
-            {},
-            mongocxx::options::find{}.sort(document{} << "popularity" << -1 << finalize).limit(10)
-        );
+    auto user_collection = dbManager.getUserCollection();
 
-        for (auto&& doc : cursor) {
-            try {
-                crow::json::wvalue roommate;
-                roommate["id"] = doc["_id"].get_oid().value.to_string();
-                roommate["username"] = doc["username"] ? std::string(doc["username"].get_string().value) : "";
-                roommate["popularity"] = doc["popularity"] ? normalizePopularity(doc["popularity"].get_double().value) : 0.0;
-                roommate["matches"] = doc["matches"] ? doc["matches"].get_int32().value : 0;
-                result["roommates"][result["roommates"].size()] = std::move(roommate);
-            } catch (const std::exception& e) {
-                std::cerr << "Exception for doc: " << bsoncxx::to_json(doc) << "\nError: " << e.what() << std::endl;
-                result["error"] = "Backend error: " + std::string(e.what());
-            }
+    result["roommates"] = crow::json::wvalue::list();
+    auto current_user_doc = user_collection.find_one(document{} << "_id" << bsoncxx::oid(currentUserId) << finalize);
+    if (!current_user_doc) {
+        result["error"] = "Current user not found.";
+        return result;
+    }
+
+    auto current_user_view = current_user_doc->view();
+    double currentLat = current_user_view["lat"].get_double().value;
+    double currentLong = current_user_view["long"].get_double().value;
+
+    auto cursor = user_collection.find({});
+    std::vector<std::pair<double, crow::json::wvalue>> scoredUsers;
+
+    for (auto&& doc : cursor) {
+        try {
+            double userLat = doc["lat"].get_double().value;
+            double userLong = doc["long"].get_double().value;
+
+            double distance = haversine(currentLat, currentLong, userLat, userLong);
+            double normalizedDistance = normalizeProximity(distance);
+
+            double popularity = doc["popularity"] ? doc["popularity"].get_double().value : 0.0;
+            double normalizedPopularity = normalizePopularity(popularity);
+
+            double weightDistance = 0.4;
+            double weightPopularity = 0.6;
+            double combinedScore = (weightDistance * normalizedDistance) + (weightPopularity * normalizedPopularity);
+
+            // Prepare user data
+            crow::json::wvalue user;
+            user["id"] = doc["_id"].get_oid().value.to_string();
+            user["username"] = doc["username"] ? std::string(doc["username"].get_string().value) : "";
+            user["distance"] = distance;
+            user["popularity"] = normalizedPopularity;
+
+            scoredUsers.emplace_back(combinedScore, std::move(user));
+        } catch (const std::exception& e) {
+            std::cerr << "Exception for doc: " << bsoncxx::to_json(doc) << "\nError: " << e.what() << std::endl;
         }
-    } catch (const std::exception& e) {
-        std::cerr << "Error fetching recommended roommates: " << e.what() << std::endl;
-        result["error"] = "Backend error: " + std::string(e.what());
     }
     return result;
 }
 
+/*
+    * Fetches recommended rooms for the current user based on proximity and popularity.
+    * The rooms are scored based on their distance from the user's location and their popularity.
+    * @param currentUserId The ID of the current user.
+    * @return A JSON object containing the recommended rooms.
+*/
+crow::json::wvalue getRecommendedRooms(const std::string& currentUserId) {
+    crow::json::wvalue result;
+    auto& dbManager = getDbManager();
+    auto user_collection = dbManager.getUserCollection();
+
+    auto current_user_doc = user_collection.find_one(document{} << "_id" << bsoncxx::oid(currentUserId) << finalize);
+    if (!current_user_doc) {
+        result["error"] = "Current user not found.";
+        return result;
+    }
+
+    auto current_user_view = current_user_doc->view();
+    double currentLat = current_user_view["lat"].get_double().value;
+    double currentLong = current_user_view["long"].get_double().value;
+
+    std::vector<std::pair<double, crow::json::wvalue>> scoredRooms;
+
+    auto room_collection = dbManager.getRoomCollection();
+    result["rooms"] = crow::json::wvalue::list();
+    auto cursor = room_collection.find({});
+    try {
+        for (auto&& doc : cursor) {
+                double roomLat = doc["lat"].get_double().value;
+                double roomLong = doc["long"].get_double().value;
+
+                double distance = haversine(currentLat, currentLong, roomLat, roomLong);
+                double normalizedDistance = normalizeProximity(distance);
+
+                double popularity = doc["popularity"] ? doc["popularity"].get_double().value : 0.0;
+                double normalizedPopularity = normalizePopularity(popularity);
+
+                double weightDistance = 0.7;
+                double weightPopularity = 0.3;
+                double combinedScore = (weightDistance * normalizedDistance) + (weightPopularity * normalizedPopularity);
+
+                crow::json::wvalue room;
+                room["id"] = doc["_id"].get_oid().value.to_string();
+                room["address"] = doc["address"] ? std::string(doc["address"].get_string().value) : "";
+                room["address_line"] = doc["address_line"] ? std::string(doc["address_line"].get_string().value) : "";
+                room["country"] = doc["country"] ? std::string(doc["country"].get_string().value) : "";
+                room["phone"] = doc["phone"] ? std::string(doc["phone"].get_string().value) : "";
+                room["budget"] = doc["budget"] ? std::string(doc["budget"].get_string().value) : "0.0";
+                room["popularity"] = normalizedPopularity;
+                result["rooms"][result["rooms"].size()] = std::move(room);
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error fetching recommended rooms: " << e.what() << std::endl;
+        result["error"] = "Backend error: " + std::string(e.what());
+    }
+
+    return result;
+}
+
+/**
+ * Fetches users who liked the given user.
+ * @param userId The ID of the user to check likes for.
+ * @return A JSON object containing the users who liked the specified user.
+ */
 crow::json::wvalue getUsersWhoLiked(const std::string& userId) {
     auto& dbManager = getDbManager();
     auto user_swipe_collection = dbManager.getUserSwipeCollection();
@@ -305,6 +452,11 @@ crow::json::wvalue getUsersWhoLiked(const std::string& userId) {
     return result;
 }
 
+/**
+ * Fetches users who liked the given room.
+ * @param roomId The ID of the room to check likes for.
+ * @return A JSON object containing the users who liked the specified room.
+ */
 crow::json::wvalue getUsersWhoLikedRoom(const std::string& roomId) {
     auto& dbManager = getDbManager();
     auto room_swipe_collection = dbManager.getRoomSwipeCollection();
@@ -320,8 +472,8 @@ crow::json::wvalue getUsersWhoLikedRoom(const std::string& roomId) {
         );
 
         for (auto&& swipe_doc : cursor) {
-            auto swipe_view = swipe_doc; // No need to call .view()
-            std::string userId = std::string(swipe_view["sourceEntityId"].get_string().value);
+            auto swipe_view = swipe_doc;
+            std::string userId = std::string(swipe_doc["sourceEntityId"].get_string().value);
 
             // Fetch user details from the user collection
             auto user_doc = user_collection.find_one(document{} << "_id" << bsoncxx::oid(userId) << finalize);
@@ -344,41 +496,13 @@ crow::json::wvalue getUsersWhoLikedRoom(const std::string& roomId) {
     return result;
 }
 
-crow::json::wvalue getRecommendedRooms() {
-    auto& dbManager = getDbManager();
-    auto room_collection = dbManager.getRoomCollection();
-    crow::json::wvalue result;
-    result["rooms"] = crow::json::wvalue::list();
-    try {
-        auto cursor = room_collection.find(
-            {},
-            mongocxx::options::find{}.sort(document{} << "popularity" << -1 << finalize).limit(10)
-        );
-        for (auto&& doc : cursor) {
-            try {
-                crow::json::wvalue room;
-                room["id"] = doc["_id"].get_oid().value.to_string();
-                room["address"] = doc["address"] ? std::string(doc["address"].get_string().value) : "";
-                room["address_line"] = doc["address_line"] ? std::string(doc["address_line"].get_string().value) : "";
-                room["country"] = doc["country"] ? std::string(doc["country"].get_string().value) : "";
-                room["phone"] = doc["phone"] ? std::string(doc["phone"].get_string().value) : "";
-                room["budget"] = doc["budget"] ? std::string(doc["budget"].get_string().value) : "0.0";
-                room["popularity"] = doc["popularity"] ? normalizePopularity(doc["popularity"].get_double().value) : 0.0;
-                result["rooms"][result["rooms"].size()] = std::move(room);
-            } catch (const std::exception& e) {
-                std::cerr << "Exception for doc: " << bsoncxx::to_json(doc) << "\nError: " << e.what() << std::endl;
-                result["error"] = "Backend error: " + std::string(e.what());
-            }
-        }
-        
-    } catch (const std::exception& e) {
-        std::cerr << "Error fetching recommended rooms: " << e.what() << std::endl;
-        result["error"] = "Backend error: " + std::string(e.what());
-    }
-
-    return result;
-}
-
+/**
+ * Processes a swipe action for a roommate.
+ * @param sourceId The ID of the user performing the swipe.
+ * @param targetId The ID of the roommate being swiped on.
+ * @param isLike True if it's a like, false if it's a dislike.
+ * @return A JSON object indicating the status of the swipe action.
+ */
 crow::json::wvalue processRoommateSwipe(const std::string& sourceId, const std::string& targetId, bool isLike) {
     auto& dbManager = getDbManager();
     auto user_collection = dbManager.getUserCollection();
@@ -388,6 +512,13 @@ crow::json::wvalue processRoommateSwipe(const std::string& sourceId, const std::
     return crow::json::wvalue({{"status", "Roommate swipe processed"}});
 }
 
+/**
+ * Processes a swipe action for a room.
+ * @param sourceId The ID of the user performing the swipe.
+ * @param targetId The ID of the room being swiped on.
+ * @param isLike True if it's a like, false if it's a dislike.
+ * @return A JSON object indicating the status of the swipe action.
+ */
 crow::json::wvalue processRoomSwipe(const std::string& sourceId, const std::string& targetId, bool isLike) {
     auto& dbManager = getDbManager();
     auto user_collection = dbManager.getUserCollection();
