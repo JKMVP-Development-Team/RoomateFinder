@@ -1,6 +1,7 @@
 #define _USE_MATH_DEFINES
 #include <cmath>
 #include <bsoncxx/builder/stream/document.hpp>
+#include <bsoncxx/json.hpp>
 #include <mongocxx/client.hpp>
 #include <mongocxx/instance.hpp>
 #include <crow/crow_all.h>
@@ -28,6 +29,10 @@ double normalizeProximity(double distanceKm, double maxDistanceKm = 50.0) {
     return score; // 1.0 (very close) to 0.0 (far)
 }
 
+double normalizePopularity(double popularity, double minPopularity = -50, double maxPopularity = 3200) {
+    if (maxPopularity == minPopularity) return 0.0;
+    return std::max(0.0, std::min(1.0, (popularity - minPopularity) / (maxPopularity - minPopularity)));
+}
 
 double calculatePopularity(int received, int made, int matches, double budget, double proximity) {
     // Adjust weights for each factor based on their importance
@@ -47,14 +52,20 @@ double calculatePopularity(int received, int made, int matches, double budget, d
 }
 
 bool swipeExists(mongocxx::collection& swipe_collection, const bsoncxx::oid& sourceEntityOid, const bsoncxx::oid& targetEntityOid) {
+    auto swipe_doc = swipe_collection.find_one(document{} << "sourceEntityId" << sourceEntityOid.to_string() << finalize);
+    if (!swipe_doc) return false;
 
-    auto existing_swipe = swipe_collection.find_one(
-        document{}
-            << "sourceEntityId" << sourceEntityOid.to_string()
-            << "targetEntityId" << targetEntityOid.to_string()
-            << finalize
-    );
-    return existing_swipe ? true : false;
+    auto view = swipe_doc->view();
+    if (view["targetEntityId"] && view["targetEntityId"].type() == bsoncxx::type::k_array) {
+        auto target_array = view["targetEntityId"].get_array().value;
+        for (auto&& oid_elem : target_array) {
+            std::string target_id = std::string(oid_elem.get_string().value);
+            if (target_id == targetEntityOid.to_string()) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 /// yeah i didn't do this function chat just gave this to me
@@ -147,18 +158,32 @@ void handleEntitySwipe(mongocxx::collection& entity_collection,
                 << " to " << targetEntityOid.to_string() << std::endl;
         return;
     }
+    auto swipe_doc = swipe_collection.find_one(
+        document{} << "sourceEntityId" << sourceEntityOid.to_string() << finalize
+    );
 
-    auto timestamp = std::chrono::system_clock::now();
-    auto timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        timestamp.time_since_epoch()).count();
-
-    auto swipe_doc = document{}
-        << "sourceEntityId" << sourceEntityOid.to_string()
-        << "targetEntityId" << targetEntityOid.to_string()
-        << "timestamp" << bsoncxx::types::b_date{std::chrono::milliseconds{timestamp_ms}}
-        << finalize;
-
-    swipe_collection.insert_one(swipe_doc.view());
+    // If swipe document exists, update it; otherwise, create a new one
+    bsoncxx::oid userswipe_oid;
+    if (swipe_doc) {
+        userswipe_oid = swipe_doc->view()["_id"].get_oid().value;
+        // Append targetEntityOid to the array
+        swipe_collection.update_one(
+            document{} << "_id" << userswipe_oid << finalize,
+            document{} << "$addToSet" << open_document
+                << "targetEntityId" << targetEntityOid.to_string()
+            << close_document << finalize
+        );
+    } else {
+        // Create new swipe document with array
+        auto new_swipe_doc = document{}
+            << "sourceEntityId" << sourceEntityOid.to_string()
+            << "targetEntityId" << bsoncxx::builder::stream::open_array
+                << targetEntityOid.to_string()
+            << bsoncxx::builder::stream::close_array
+            << finalize;
+        auto insert_result = swipe_collection.insert_one(new_swipe_doc.view());
+        userswipe_oid = insert_result->inserted_id().get_oid().value;
+    }
 
     auto source_entity = entity_collection.find_one(document{} << "_id" << sourceEntityOid << finalize);
     auto target_entity = entity_collection.find_one(document{} << "_id" << targetEntityOid << finalize);
@@ -169,6 +194,16 @@ void handleEntitySwipe(mongocxx::collection& entity_collection,
 
     auto source_doc = source_entity->view();
     int currentMade = source_doc[madeField] ? source_doc[madeField].get_int32().value : 0;
+
+    // Check if userswipeId is set, if not, set it to the user_swipe's id
+    if (!source_doc["userswipeId"] || source_doc["userswipeId"].type() != bsoncxx::type::k_oid) {
+        entity_collection.update_one(
+            document{} << "_id" << sourceEntityOid << finalize,
+            document{} << "$set" << open_document
+                << "userswipeId" << userswipe_oid
+            << close_document << finalize
+        );
+    }
 
     auto update_source = document{}
         << "$set" << open_document
@@ -207,17 +242,26 @@ crow::json::wvalue getRecommendedRoommates() {
     result["roommates"] = crow::json::wvalue::list();
     try {
         auto user_collection = dbManager.getUserCollection();
-        auto cursor = user_collection.find({});
+        auto cursor = user_collection.find(
+            {},
+            mongocxx::options::find{}.sort(document{} << "popularity" << -1 << finalize).limit(10)
+        );
+
         for (auto&& doc : cursor) {
-            crow::json::wvalue roommate;
-            roommate["id"] = doc["_id"].get_oid().value.to_string();
-            roommate["username"] = doc["username"] ? std::string(doc["username"].get_string().value) : "";
-            roommate["popularity"] = doc["popularity"] ? doc["popularity"].get_double().value : 0.0;
-            roommate["matches"] = doc["matches"] ? doc["matches"].get_int32().value : 0;
-            result["roommates"][result["roommates"].size()] = std::move(roommate);
+            try {
+                crow::json::wvalue roommate;
+                roommate["id"] = doc["_id"].get_oid().value.to_string();
+                roommate["username"] = doc["username"] ? std::string(doc["username"].get_string().value) : "";
+                roommate["popularity"] = doc["popularity"] ? normalizePopularity(doc["popularity"].get_double().value) : 0.0;
+                roommate["matches"] = doc["matches"] ? doc["matches"].get_int32().value : 0;
+                result["roommates"][result["roommates"].size()] = std::move(roommate);
+            } catch (const std::exception& e) {
+                std::cerr << "Exception for doc: " << bsoncxx::to_json(doc) << "\nError: " << e.what() << std::endl;
+                result["error"] = "Backend error: " + std::string(e.what());
+            }
         }
     } catch (const std::exception& e) {
-        std::cerr << "Exception: " << e.what() << std::endl;
+        std::cerr << "Error fetching recommended roommates: " << e.what() << std::endl;
         result["error"] = "Backend error: " + std::string(e.what());
     }
     return result;

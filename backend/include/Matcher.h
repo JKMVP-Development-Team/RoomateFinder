@@ -22,6 +22,7 @@ void handleEntitySwipe(mongocxx::collection& entity_collection,
                       const std::string& popularityField = "popularity");
 bool swipeExists(mongocxx::collection& swipe_collection, const bsoncxx::oid& sourceEntityOid, const bsoncxx::oid& targetEntityOid);
 double normalizeBudget(double budget);
+double normalizePopularity(double popularity, double minPopularity = 0.0, double maxPopularity = 100.0);
 // High-level API for main.cpp
 crow::json::wvalue getRecommendedRoommates();
 crow::json::wvalue getRecommendedRooms();
