@@ -6,8 +6,8 @@
 #include <string>
 
 // Business logic
-double calculatePopularity(int received, int made, int matches = 0);
-void updateEntityPopularity(mongocxx::collection& entity_collection, const bsoncxx::oid& entityOid);
+double calculatePopularity(int received, int made, int matches, double budget, double proximity);
+void updateEntityPopularity(mongocxx::collection& entity_collection, const bsoncxx::oid& entityOid, double proximity = 0.0);
 void updateEntityMatches(mongocxx::collection& entity_collection,
                         const bsoncxx::oid& sourceEntityOid,
                         const bsoncxx::oid& targetEntityOid);
@@ -21,10 +21,9 @@ void handleEntitySwipe(mongocxx::collection& entity_collection,
                       const std::string& matchesField = "matches",
                       const std::string& popularityField = "popularity");
 bool swipeExists(mongocxx::collection& swipe_collection, const bsoncxx::oid& sourceEntityOid, const bsoncxx::oid& targetEntityOid);
+double normalizeBudget(double budget);
 // High-level API for main.cpp
 crow::json::wvalue getRecommendedRoommates();
 crow::json::wvalue getRecommendedRooms();
 crow::json::wvalue processRoommateSwipe(const std::string& sourceId, const std::string& targetId, bool isLike);
 crow::json::wvalue processRoomSwipe(const std::string& sourceId, const std::string& targetId, bool isLike);
-
-int test(); // For testing purposes

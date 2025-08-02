@@ -1,3 +1,5 @@
+#define _USE_MATH_DEFINES
+#include <cmath>
 #include <bsoncxx/builder/stream/document.hpp>
 #include <mongocxx/client.hpp>
 #include <mongocxx/instance.hpp>
@@ -12,8 +14,36 @@ using bsoncxx::builder::stream::open_document;
 using bsoncxx::builder::stream::close_document;
 
 // --- Logic Functions ---
-double calculatePopularity(int received, int made, int matches) {
-    return static_cast<double>(received + 2 * matches) / std::max(made, 1);
+
+// TODO: Adjust the min and max budget values
+double normalizeBudget(double budget) {
+    double minBudget = 500.0;
+    double maxBudget = 100000.0;
+    return (budget - minBudget) / (maxBudget - minBudget); // Result: 0.0 to 1.0
+}
+
+// TODO: Adjust the max distance value 
+double normalizeProximity(double distanceKm, double maxDistanceKm = 50.0) {
+    double score = 1.0 - std::min(distanceKm, maxDistanceKm) / maxDistanceKm;
+    return score; // 1.0 (very close) to 0.0 (far)
+}
+
+
+double calculatePopularity(int received, int made, int matches, double budget, double proximity) {
+    // Adjust weights for each factor based on their importance
+    // TODO: Train the data based on data to a machine learning model for a popularity score
+    double w_received = 1.0;
+    double w_made = -0.5;
+    double w_matches = 2.0;
+    double w_budget = 0.2;
+    double w_proximity = 0.3;
+    double normalizedBudget = normalizeBudget(budget);
+
+    return w_received * received
+         + w_made * made
+         + w_matches * matches
+         + w_budget * normalizedBudget
+         + w_proximity * proximity;
 }
 
 bool swipeExists(mongocxx::collection& swipe_collection, const bsoncxx::oid& sourceEntityOid, const bsoncxx::oid& targetEntityOid) {
@@ -27,8 +57,19 @@ bool swipeExists(mongocxx::collection& swipe_collection, const bsoncxx::oid& sou
     return existing_swipe ? true : false;
 }
 
+/// yeah i didn't do this function chat just gave this to me
+double haversine(double lat1, double lon1, double lat2, double lon2) {
+    const double R = 6371.0; // Earth radius in km
+    double dLat = (lat2 - lat1) * M_PI / 180.0;
+    double dLon = (lon2 - lon1) * M_PI / 180.0;
+    double a = sin(dLat/2) * sin(dLat/2) +
+               cos(lat1 * M_PI / 180.0) * cos(lat2 * M_PI / 180.0) *
+               sin(dLon/2) * sin(dLon/2);
+    double c = 2 * atan2(sqrt(a), sqrt(1-a));
+    return R * c; // Distance in km
+}
 
-void updateEntityPopularity(mongocxx::collection& entity_collection, const bsoncxx::oid& entityOid) {
+void updateEntityPopularity(mongocxx::collection& entity_collection, const bsoncxx::oid& entityOid, double proximity = 0.0) {
     auto maybe_entity = entity_collection.find_one(document{} << "_id" << entityOid << finalize);
     if (!maybe_entity) {
         std::cerr << "Entity not found: " << entityOid.to_string() << std::endl;
@@ -39,10 +80,20 @@ void updateEntityPopularity(mongocxx::collection& entity_collection, const bsonc
     int currentMade = entity_doc["swipesMade"] ? entity_doc["swipesMade"].get_int32().value : 0;
     int currentReceived = entity_doc["swipesReceived"] ? entity_doc["swipesReceived"].get_int32().value : 0;
     int currentMatches = entity_doc["matches"] ? entity_doc["matches"].get_int32().value : 0;
-
+    std::string budgetStr = entity_doc["budget"] && entity_doc["budget"].type() == bsoncxx::type::k_string
+        ? std::string(entity_doc["budget"].get_string().value)
+        : "0.0";
+    double budget = 0.0;
+    try {
+        // Remove $ if present
+        if (!budgetStr.empty() && budgetStr[0] == '$') budgetStr = budgetStr.substr(1);
+        budget = std::stod(budgetStr);
+    } catch (...) {
+        budget = 0.0;
+    }
 
     int newReceived = currentReceived + 1;
-    double newPopularity = calculatePopularity(newReceived, currentMade, currentMatches);
+    double newPopularity = calculatePopularity(newReceived, currentMade, currentMatches, budget, proximity);
 
     auto update_doc = document{}
         << "$set" << open_document
@@ -110,6 +161,7 @@ void handleEntitySwipe(mongocxx::collection& entity_collection,
     swipe_collection.insert_one(swipe_doc.view());
 
     auto source_entity = entity_collection.find_one(document{} << "_id" << sourceEntityOid << finalize);
+    auto target_entity = entity_collection.find_one(document{} << "_id" << targetEntityOid << finalize);
     if (!source_entity) {
         std::cerr << "Source entity not found: " << sourceEntityOid.to_string() << std::endl;
         return;
@@ -126,7 +178,13 @@ void handleEntitySwipe(mongocxx::collection& entity_collection,
     entity_collection.update_one(document{} << "_id" << sourceEntityOid << finalize, std::move(update_source));
 
     if (isLike) {
-        updateEntityPopularity(entity_collection, targetEntityOid);
+        double proximity = haversine(
+            source_doc["lat"].get_double().value,
+            source_doc["long"].get_double().value,
+            target_entity->view()["lat"].get_double().value,
+            target_entity->view()["long"].get_double().value
+        );
+        updateEntityPopularity(entity_collection, targetEntityOid, proximity);
 
         // Check for mutual like
         auto mutual_swipe = swipe_collection.find_one(
@@ -203,70 +261,4 @@ crow::json::wvalue processRoomSwipe(const std::string& sourceId, const std::stri
     handleEntitySwipe(room_collection, room_swipe_collection,
                       bsoncxx::oid(sourceId), bsoncxx::oid(targetId), isLike);
     return crow::json::wvalue({{"status", "Room swipe processed"}});
-}
-
-// --- Test function remains unchanged ---
-int test() {
-    try
-    {
-        auto& dbManager = getDbManager();
-        // --- Testing functions below ---
-        auto entity_collection = dbManager.getUserCollection();
-        auto swipe_collection = dbManager.getUserSwipeCollection();
-
-        document entity_doc_builder1, entity_doc_builder2;
-        entity_doc_builder1 << "name" << "EntityA" << "swipesMade" << 0 << "swipesReceived" << 0 << "matches" << 0 << "popularity" << 0.0;
-        entity_doc_builder2 << "name" << "EntityB" << "swipesMade" << 0 << "swipesReceived" << 0 << "matches" << 0 << "popularity" << 0.0;
-
-        auto result1 = entity_collection.insert_one(entity_doc_builder1 << finalize);
-        auto result2 = entity_collection.insert_one(entity_doc_builder2 << finalize);
-
-        bsoncxx::oid sourceEntityOid, targetEntityOid;
-        if (result1 && result1->inserted_id().type() == bsoncxx::type::k_oid) {
-            sourceEntityOid = result1->inserted_id().get_oid().value;
-            std::cout << "Inserted source entity with _id: " << sourceEntityOid.to_string() << std::endl;
-        }
-        if (result2 && result2->inserted_id().type() == bsoncxx::type::k_oid) {
-            targetEntityOid = result2->inserted_id().get_oid().value;
-            std::cout << "Inserted target entity with _id: " << targetEntityOid.to_string() << std::endl;
-        }
-
-        std::cout << "Inserted test entities." << std::endl;
-
-        // Test handleEntitySwipe (simulate a like swipe)
-        handleEntitySwipe(entity_collection, swipe_collection, sourceEntityOid, targetEntityOid, true);
-        std::cout << "handleEntitySwipe executed (like)." << std::endl;
-
-        // Test handleEntitySwipe (simulate a dislike swipe)
-        handleEntitySwipe(entity_collection, swipe_collection, sourceEntityOid, targetEntityOid, false);
-        std::cout << "handleEntitySwipe executed (dislike)." << std::endl;
-
-        // Simulate EntityA likes EntityB (no match yet)
-        handleEntitySwipe(entity_collection, swipe_collection, sourceEntityOid, targetEntityOid, true);
-        std::cout << "EntityA liked EntityB." << std::endl;
-
-        // Check matches count for both entities (should be 0)
-        auto entityA = entity_collection.find_one(document{} << "_id" << sourceEntityOid << finalize);
-        auto entityB = entity_collection.find_one(document{} << "_id" << targetEntityOid << finalize);
-        int matchesA = entityA && entityA->view()["matches"] ? entityA->view()["matches"].get_int32().value : 0;
-        int matchesB = entityB && entityB->view()["matches"] ? entityB->view()["matches"].get_int32().value : 0;
-        std::cout << "Matches after first like: EntityA=" << matchesA << ", EntityB=" << matchesB << std::endl;
-
-        // Simulate EntityB likes EntityA (should trigger a match)
-        handleEntitySwipe(entity_collection, swipe_collection, targetEntityOid, sourceEntityOid, true);
-        std::cout << "EntityB liked EntityA." << std::endl;
-
-        // Check matches count for both entities (should be 1)
-        entityA = entity_collection.find_one(document{} << "_id" << sourceEntityOid << finalize);
-        entityB = entity_collection.find_one(document{} << "_id" << targetEntityOid << finalize);
-        matchesA = entityA && entityA->view()["matches"] ? entityA->view()["matches"].get_int32().value : 0;
-        matchesB = entityB && entityB->view()["matches"] ? entityB->view()["matches"].get_int32().value : 0;
-        std::cout << "Matches after mutual like: EntityA=" << matchesA << ", EntityB=" << matchesB << std::endl;
-    }
-    catch (const std::exception& e)
-    {
-        std::cout << "Exception: " << e.what() << std::endl;
-        return 1;
-    }
-    return 0;
 }
