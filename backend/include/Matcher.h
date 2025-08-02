@@ -26,5 +26,6 @@ double normalizePopularity(double popularity, double minPopularity = 0.0, double
 // High-level API for main.cpp
 crow::json::wvalue getRecommendedRoommates();
 crow::json::wvalue getRecommendedRooms();
+crow::json::wvalue getUsersWhoLikedRoom(const std::string& roomId);
 crow::json::wvalue processRoommateSwipe(const std::string& sourceId, const std::string& targetId, bool isLike);
 crow::json::wvalue processRoomSwipe(const std::string& sourceId, const std::string& targetId, bool isLike);

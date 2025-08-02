@@ -143,15 +143,16 @@ void updateEntityMatches(mongocxx::collection& entity_collection,
     entity_collection.update_one(document{} << "_id" << targetEntityOid << finalize, std::move(update_target));
 }
 
-void handleEntitySwipe(mongocxx::collection& entity_collection,
-                      mongocxx::collection& swipe_collection,
-                      const bsoncxx::oid& sourceEntityOid,
-                      const bsoncxx::oid& targetEntityOid,
-                      bool isLike,
-                      const std::string& madeField = "swipesMade",
-                      const std::string& receivedField = "swipesReceived",
-                      const std::string& matchesField = "matches",
-                      const std::string& popularityField = "popularity") {
+void handleEntitySwipe(mongocxx::collection& source_collection,
+                        mongocxx::collection& target_collection,
+                        mongocxx::collection& swipe_collection,
+                        const bsoncxx::oid& sourceEntityOid,
+                        const bsoncxx::oid& targetEntityOid,
+                        bool isLike,
+                        const std::string& madeField = "swipesMade",
+                        const std::string& receivedField = "swipesReceived",
+                        const std::string& matchesField = "matches",
+                        const std::string& popularityField = "popularity") {
 
     if (swipeExists(swipe_collection, sourceEntityOid, targetEntityOid)) {
         std::cerr << "Swipe already exists from " << sourceEntityOid.to_string()
@@ -185,32 +186,27 @@ void handleEntitySwipe(mongocxx::collection& entity_collection,
         userswipe_oid = insert_result->inserted_id().get_oid().value;
     }
 
-    auto source_entity = entity_collection.find_one(document{} << "_id" << sourceEntityOid << finalize);
-    auto target_entity = entity_collection.find_one(document{} << "_id" << targetEntityOid << finalize);
+    auto source_entity = source_collection.find_one(document{} << "_id" << sourceEntityOid << finalize);
     if (!source_entity) {
         std::cerr << "Source entity not found: " << sourceEntityOid.to_string() << std::endl;
+        return;
+    }
+
+    auto target_entity = target_collection.find_one(document{} << "_id" << targetEntityOid << finalize);
+    if (!target_entity) {
+        std::cerr << "Target entity not found: " << targetEntityOid.to_string() << std::endl;
         return;
     }
 
     auto source_doc = source_entity->view();
     int currentMade = source_doc[madeField] ? source_doc[madeField].get_int32().value : 0;
 
-    // Check if userswipeId is set, if not, set it to the user_swipe's id
-    if (!source_doc["userswipeId"] || source_doc["userswipeId"].type() != bsoncxx::type::k_oid) {
-        entity_collection.update_one(
-            document{} << "_id" << sourceEntityOid << finalize,
-            document{} << "$set" << open_document
-                << "userswipeId" << userswipe_oid
-            << close_document << finalize
-        );
-    }
-
     auto update_source = document{}
         << "$set" << open_document
         << madeField << (currentMade + 1)
         << close_document
         << finalize;
-    entity_collection.update_one(document{} << "_id" << sourceEntityOid << finalize, std::move(update_source));
+    source_collection.update_one(document{} << "_id" << sourceEntityOid << finalize, std::move(update_source));
 
     if (isLike) {
         double proximity = haversine(
@@ -219,7 +215,7 @@ void handleEntitySwipe(mongocxx::collection& entity_collection,
             target_entity->view()["lat"].get_double().value,
             target_entity->view()["long"].get_double().value
         );
-        updateEntityPopularity(entity_collection, targetEntityOid, proximity);
+        updateEntityPopularity(target_collection, targetEntityOid, proximity);
 
         // Check for mutual like
         auto mutual_swipe = swipe_collection.find_one(
@@ -229,7 +225,7 @@ void handleEntitySwipe(mongocxx::collection& entity_collection,
                 << finalize
         );
         if (mutual_swipe) {
-            updateEntityMatches(entity_collection, sourceEntityOid, targetEntityOid);
+            updateEntityMatches(source_collection, sourceEntityOid, targetEntityOid);
         }
     }
 }
@@ -267,23 +263,117 @@ crow::json::wvalue getRecommendedRoommates() {
     return result;
 }
 
+crow::json::wvalue getUsersWhoLiked(const std::string& userId) {
+    auto& dbManager = getDbManager();
+    auto user_swipe_collection = dbManager.getUserSwipeCollection();
+    auto user_collection = dbManager.getUserCollection();
+
+    crow::json::wvalue result;
+    result["users"] = crow::json::wvalue::list();
+
+    try {
+        // Find all swipe documents where the user is the source
+        auto cursor = user_swipe_collection.find(
+            document{} << "sourceEntityId" << userId << finalize
+        );
+
+        for (auto&& swipe_doc : cursor) {
+            if (swipe_doc["targetEntityId"] && swipe_doc["targetEntityId"].type() == bsoncxx::type::k_array) {
+                for (auto&& oid_elem : swipe_doc["targetEntityId"].get_array().value) {
+                    std::string targetId = std::string(oid_elem.get_string().value);
+
+                    // Fetch user details from the user collection
+                    auto user_doc = user_collection.find_one(document{} << "_id" << bsoncxx::oid(targetId) << finalize);
+                    if (user_doc) {
+                        auto user_view = user_doc->view();
+                        crow::json::wvalue user;
+                        user["id"] = targetId;
+                        user["username"] = user_view["username"] ? std::string(user_view["username"].get_string().value) : "";
+                        user["popularity"] = user_view["popularity"] ? user_view["popularity"].get_double().value : 0.0;
+                        user["matches"] = user_view["matches"] ? user_view["matches"].get_int32().value : 0;
+
+                        result["users"][result["users"].size()] = std::move(user);
+                    }
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error fetching users who liked the user: " << e.what()
+                    << std::endl;
+        result["error"] = "Backend error: " + std::string(e.what());
+    }
+    return result;
+}
+
+crow::json::wvalue getUsersWhoLikedRoom(const std::string& roomId) {
+    auto& dbManager = getDbManager();
+    auto room_swipe_collection = dbManager.getRoomSwipeCollection();
+    auto user_collection = dbManager.getUserCollection();
+
+    crow::json::wvalue result;
+    result["users"] = crow::json::wvalue::list();
+
+    try {
+        // Find all swipe documents where the room is the target
+        auto cursor = room_swipe_collection.find(
+            document{} << "targetEntityId" << roomId << finalize
+        );
+
+        for (auto&& swipe_doc : cursor) {
+            auto swipe_view = swipe_doc; // No need to call .view()
+            std::string userId = std::string(swipe_view["sourceEntityId"].get_string().value);
+
+            // Fetch user details from the user collection
+            auto user_doc = user_collection.find_one(document{} << "_id" << bsoncxx::oid(userId) << finalize);
+            if (user_doc) {
+                auto user_view = user_doc->view();
+                crow::json::wvalue user;
+                user["id"] = userId;
+                user["username"] = user_view["username"] ? std::string(user_view["username"].get_string().value) : "";
+                user["popularity"] = user_view["popularity"] ? user_view["popularity"].get_double().value : 0.0;
+                user["matches"] = user_view["matches"] ? user_view["matches"].get_int32().value : 0;
+
+                result["users"][result["users"].size()] = std::move(user);
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error fetching users who liked the room: " << e.what() << std::endl;
+        result["error"] = "Backend error: " + std::string(e.what());
+    }
+
+    return result;
+}
+
 crow::json::wvalue getRecommendedRooms() {
     auto& dbManager = getDbManager();
     auto room_collection = dbManager.getRoomCollection();
     crow::json::wvalue result;
     result["rooms"] = crow::json::wvalue::list();
-
-    auto cursor = room_collection.find(
-        {},
-        mongocxx::options::find{}.sort(document{} << "popularity" << -1 << finalize).limit(10)
-    );
-
-    for (auto&& doc : cursor) {
-        crow::json::wvalue room;
-        room["id"] = doc["_id"].get_oid().value.to_string();
-        room["name"] = doc["name"] ? std::string(doc["name"].get_string().value) : "";
-        room["popularity"] = doc["popularity"] ? doc["popularity"].get_double().value : 0.0;
-        result["rooms"][result["rooms"].size()] = std::move(room);
+    try {
+        auto cursor = room_collection.find(
+            {},
+            mongocxx::options::find{}.sort(document{} << "popularity" << -1 << finalize).limit(10)
+        );
+        for (auto&& doc : cursor) {
+            try {
+                crow::json::wvalue room;
+                room["id"] = doc["_id"].get_oid().value.to_string();
+                room["address"] = doc["address"] ? std::string(doc["address"].get_string().value) : "";
+                room["address_line"] = doc["address_line"] ? std::string(doc["address_line"].get_string().value) : "";
+                room["country"] = doc["country"] ? std::string(doc["country"].get_string().value) : "";
+                room["phone"] = doc["phone"] ? std::string(doc["phone"].get_string().value) : "";
+                room["budget"] = doc["budget"] ? std::string(doc["budget"].get_string().value) : "0.0";
+                room["popularity"] = doc["popularity"] ? normalizePopularity(doc["popularity"].get_double().value) : 0.0;
+                result["rooms"][result["rooms"].size()] = std::move(room);
+            } catch (const std::exception& e) {
+                std::cerr << "Exception for doc: " << bsoncxx::to_json(doc) << "\nError: " << e.what() << std::endl;
+                result["error"] = "Backend error: " + std::string(e.what());
+            }
+        }
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error fetching recommended rooms: " << e.what() << std::endl;
+        result["error"] = "Backend error: " + std::string(e.what());
     }
 
     return result;
@@ -293,16 +383,17 @@ crow::json::wvalue processRoommateSwipe(const std::string& sourceId, const std::
     auto& dbManager = getDbManager();
     auto user_collection = dbManager.getUserCollection();
     auto user_swipe_collection = dbManager.getUserSwipeCollection();
-    handleEntitySwipe(user_collection, user_swipe_collection,
+    handleEntitySwipe(user_collection, user_collection, user_swipe_collection,
                       bsoncxx::oid(sourceId), bsoncxx::oid(targetId), isLike);
     return crow::json::wvalue({{"status", "Roommate swipe processed"}});
 }
 
 crow::json::wvalue processRoomSwipe(const std::string& sourceId, const std::string& targetId, bool isLike) {
     auto& dbManager = getDbManager();
+    auto user_collection = dbManager.getUserCollection();
     auto room_collection = dbManager.getRoomCollection();
     auto room_swipe_collection = dbManager.getRoomSwipeCollection();
-    handleEntitySwipe(room_collection, room_swipe_collection,
+    handleEntitySwipe(user_collection, room_collection, room_swipe_collection,
                       bsoncxx::oid(sourceId), bsoncxx::oid(targetId), isLike);
     return crow::json::wvalue({{"status", "Room swipe processed"}});
 }

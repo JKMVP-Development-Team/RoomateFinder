@@ -14,8 +14,7 @@ public:
     mongocxx::collection getRoomSwipeCollection();
 private:
     mongocxx::client client_;
-    mongocxx::database user_db_;
-    mongocxx::database room_db_;
+    mongocxx::database db;
 };
 
 DBManager& getDbManager();
