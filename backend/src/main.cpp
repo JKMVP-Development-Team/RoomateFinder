@@ -29,7 +29,7 @@ int main() {
         std::string sourceId = body["sourceId"].s();
         std::string targetId = body["targetId"].s();
         bool isLike = body["isLike"].b();
-        return crow::response(processSwipe(sourceId, targetId, isLike));
+        return crow::response(processSwipe(sourceId, targetId, type, isLike));
     });
 
 

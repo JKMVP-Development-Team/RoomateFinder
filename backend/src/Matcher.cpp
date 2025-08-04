@@ -133,19 +133,19 @@ void updateEntityPopularity(mongocxx::collection& entity_collection, const bsonc
  * Updates the matches count for both entities involved in a swipe.
  * @param source_collection The collection of the source entity (user or room).
  * @param target_collection The collection of the target entity (user or room).
- * @param sourceOid The OID of the source entity.
- * @param targetOid The OID of the target entity.
+ * @param sourceEntityOid The OID of the source entity.
+ * @param targetEntityOid The OID of the target entity.
  */
 void updateEntityMatches(mongocxx::collection& source_collection,
                          mongocxx::collection& target_collection,
-                         const bsoncxx::oid& sourceOid,
-                         const bsoncxx::oid& targetOid) {
+                         const bsoncxx::oid& sourceEntityOid,
+                         const bsoncxx::oid& targetEntityOid) {
     source_collection.update_one(
-        document{} << "_id" << sourceOid << finalize,
+        document{} << "_id" << sourceEntityOid << finalize,
         document{} << "$inc" << open_document << "matches" << 1 << close_document << finalize);
 
     target_collection.update_one(
-        document{} << "_id" << targetOid << finalize,
+        document{} << "_id" << targetEntityOid << finalize,
         document{} << "$inc" << open_document << "matches" << 1 << close_document << finalize);
 }
 
@@ -167,10 +167,10 @@ void handleEntityLike(mongocxx::collection& source_collection,
 
     // Check for mutual like
     auto filter = document{}
-                  << "sourceEntityId" << targetOid.to_string()
-                  << "targetEntityId" << sourceOid.to_string()
+                  << "sourceEntityId" << targetEntityOid.to_string()
+                  << "targetEntityId" << sourceEntityOid.to_string()
                   << finalize;
-    if (swipe_collection.find_one(filter)) {
+    if (swipe_collection.find_one(filter.view())) {
         updateEntityMatches(source_collection, target_collection, sourceEntityOid, targetEntityOid);
     }
     
@@ -190,20 +190,20 @@ void handleEntitySwipe(mongocxx::collection& source_collection,
 
     mongocxx::options::update opts;
     opts.upsert(true);
-    swipeColl.update_one(
-        document{} << "sourceEntityId" << sourceOid.to_string() << finalize,
+    swipe_collection.update_one(
+        document{} << "sourceEntityId" << sourceEntityOid.to_string() << finalize,
         document{}
             << "$setOnInsert" << open_document
-                << "sourceEntityId" << sourceOid.to_string()
+                << "sourceEntityId" << sourceEntityOid.to_string()
             << close_document
             << "$addToSet" << open_document
-                << "targetEntityId" << targetOid.to_string()
+                << "targetEntityId" << targetEntityOid.to_string()
             << close_document
             << finalize,
         opts);
 
-    sourceColl.update_one(
-        document{} << "_id" << sourceOid << finalize,
+    source_collection.update_one(
+        document{} << "_id" << sourceEntityOid << finalize,
         document{}
             << "$inc" << open_document
                 << "swipesMade" << 1
@@ -219,14 +219,14 @@ void handleEntitySwipe(mongocxx::collection& source_collection,
  * @param type The type of recommendation to fetch ("roommate" or "room").
  * @return A JSON object containing recommended roommates or rooms.
  */
-crow::json::wvalue getRecommendedations(const std::string& currentUserId, const std::string& type) {
+crow::json::wvalue getRecommendations(const std::string& currentUserId, const std::string& type) {
 
     if (type != "roommate" && type != "room") {
         return crow::json::wvalue({{"error", "Invalid type parameter. Use 'roommate' or 'room'."}});
     }
 
     crow::json::wvalue result;
-    auto& dbManager = getDbManager();
+    auto& db = getDbManager();
     auto& userColl = db.getUserCollection();
     auto& roomColl = db.getRoomCollection();
     auto& entityColl = (type == "roommate") ? userColl : roomColl;
@@ -239,7 +239,9 @@ crow::json::wvalue getRecommendedations(const std::string& currentUserId, const 
     }
 
     auto current_view = currentDoc->view();
-    auto cursor = entity_collection.find(document{} << "country" << userView["country"].get_string().value << "city" << userView["city"].get_string().value << finalize);
+    std::string country = std::string(current_view["country"].get_string().value);
+    std::string city    = std::string(current_view["city"].get_string().value);
+    auto cursor = entityColl.find(document{} << "country" << country << "city" << city << finalize);
     
     std::vector<std::pair<double, crow::json::wvalue>> scored;
 
@@ -265,22 +267,23 @@ crow::json::wvalue getRecommendedations(const std::string& currentUserId, const 
             entity["id"] = doc["_id"].get_oid().value.to_string();
 
             if (type == "roommate") {
-                entity["username"]  = doc["username"]  ? doc["username"] .get_string().value.to_string() : "";
-                entity["firstName"] = doc["firstName"] ? doc["firstName"].get_string().value.to_string() : "";
-                entity["lastName"]  = doc["lastName"]  ? doc["lastName"] .get_string().value.to_string() : "";
+                entity["username"]  = doc["username"]  ? std::string(doc["username"] .get_string().value) : "";
+                entity["firstName"] = doc["firstName"] ? std::string(doc["firstName"].get_string().value) : "";
+                entity["lastName"]  = doc["lastName"]  ? std::string(doc["lastName"] .get_string().value) : "";
             }
 
-            entity["address"]      = doc["address"]      ? doc["address"]     .get_string().value.to_string() : "";
-            entity["address_line"] = doc["address_line"] ? doc["address_line"].get_string().value.to_string() : "";
-            entity["city"]         = doc["city"]         ? doc["city"]        .get_string().value.to_string() : "";
-            entity["country"]      = doc["country"]      ? doc["country"]     .get_string().value.to_string() : ""; 
-            entity["phone"]        = doc["phone"]        ? doc["phone"]       .get_string().value.to_string() : "";
-            entity["budget"]       = doc["budget"]       ? doc["budget"]      .get_string().value.to_string() : "0.0";
+            entity["address"]      = doc["address"]      ? std::string(doc["address"]     .get_string().value) : "";
+            entity["address_line"] = doc["address_line"] ? std::string(doc["address_line"].get_string().value) : "";
+            entity["city"]         = doc["city"]         ? std::string(doc["city"]        .get_string().value) : "";
+            entity["country"]      = doc["country"]      ? std::string(doc["country"]     .get_string().value) : ""; 
+            entity["phone"]        = doc["phone"]        ? std::string(doc["phone"]       .get_string().value) : "";
+            entity["budget"]       = doc["budget"]       ? std::string(doc["budget"]      .get_string().value) : "0.0";
             entity["popularity"]   = norm_Pop;
 
             scored.emplace_back(norm_Pop, std::move(entity));
         } catch (const std::exception& e) {
-            std::cerr << "Exception for doc: " << bsoncxx::to_json(doc) << "\nError: " << e.what() << std::endl;
+            std::cerr << "Exception for doc: " << bsoncxx::to_json(doc)
+                        << "\nError: " << e.what() << std::endl;
             result["error"] = "Backend error: " + std::string(e.what());
         }
     }
@@ -289,7 +292,6 @@ crow::json::wvalue getRecommendedations(const std::string& currentUserId, const 
         return a.first > b.first;
     });
 
-    crow::json::wvalue result;
     result["entity"] = crow::json::wvalue::list();
     for (size_t i = 0; i < std::min(scored.size(), size_t(10)); ++i) {
         result["entity"][i] = std::move(scored[i].second);
