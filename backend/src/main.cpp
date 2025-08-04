@@ -10,22 +10,17 @@ int main() {
     });
 
     // Get recommended roommates for a user
-    CROW_ROUTE(app, "/api/roommate/recommend").methods("GET"_method)
+    CROW_ROUTE(app, "/api/recommend").methods("GET"_method)
     ([](const crow::request& req){
+        auto type = req.url_params.get("type");
+        if (!type) return crow::response(400, "Missing type parameter.");
         auto userId = req.url_params.get("userId");
         if (!userId) return crow::response(400, "Missing userId parameter.");
-        return crow::response(getRecommendedRoommates(userId));
+
+        return crow::response(getRecommendations(userId, type));
     });
 
-    // Get recommended rooms for a user
-    CROW_ROUTE(app, "/api/room/recommend").methods("GET"_method)
-    ([](const crow::request& req){
-        auto userId = req.url_params.get("userId");
-        if (!userId) return crow::response(400, "Missing userId parameter.");
-        return crow::response(getRecommendedRooms(userId));
-    });
-
-    CROW_ROUTE(app, "/api/room/swipe").methods("POST"_method)
+    CROW_ROUTE(app, "/api/swipe").methods("POST"_method)
     ([](const crow::request& req){
         auto body = crow::json::load(req.body);
         if (!body) return crow::response(400, "Invalid JSON.");
@@ -34,19 +29,7 @@ int main() {
         std::string sourceId = body["sourceId"].s();
         std::string targetId = body["targetId"].s();
         bool isLike = body["isLike"].b();
-        return crow::response(processRoomSwipe(sourceId, targetId, isLike));
-    });
-
-    CROW_ROUTE(app, "/api/roommate/swipe").methods("POST"_method)
-    ([](const crow::request& req){
-        auto body = crow::json::load(req.body);
-        if (!body) return crow::response(400, "Invalid JSON.");
-
-        std::string type = body["type"].s();
-        std::string sourceId = body["sourceId"].s();
-        std::string targetId = body["targetId"].s();
-        bool isLike = body["isLike"].b();
-        return crow::response(processRoommateSwipe(sourceId, targetId, isLike));
+        return crow::response(processSwipe(sourceId, targetId, isLike));
     });
 
 
