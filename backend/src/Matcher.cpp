@@ -227,8 +227,8 @@ crow::json::wvalue getRecommendations(const std::string& currentUserId, const st
 
     crow::json::wvalue result;
     auto& db = getDbManager();
-    auto& userColl = db.getUserCollection();
-    auto& roomColl = db.getRoomCollection();
+    auto userColl = db.getUserCollection();
+    auto roomColl = db.getRoomCollection();
     auto& entityColl = (type == "roommate") ? userColl : roomColl;
 
     auto currentDoc = userColl.find_one(
@@ -325,8 +325,7 @@ crow::json::wvalue getUserWhoLikedEntity(const std::string& entityId, const std:
         );
 
         for (auto&& swipe_doc : cursor) {
-            auto swipe_view = swipe_doc.view();
-            std::string userId = std::string(swipe_view["sourceEntityId"].get_string().value);
+            std::string userId = std::string(swipe_doc["sourceEntityId"].get_string().value);
 
             // Fetch user details from the user collection
             auto user_doc = user_collection.find_one(document{} << "_id" << bsoncxx::oid(userId) << finalize);
@@ -360,9 +359,8 @@ crow::json::wvalue getUserWhoLikedEntity(const std::string& entityId, const std:
  * @return A JSON object indicating the status of the swipe action.
  */
 crow::json::wvalue processSwipe(const std::string& sourceId, const std::string& targetId, const std::string& type, bool isLike) {
-    auto& dbManager = getDbManager();
     auto& db       = getDbManager();
-    auto& userColl = db.getUserCollection();
+    auto userColl = db.getUserCollection();
     bsoncxx::oid srcOid(sourceId);
     bsoncxx::oid tgtOid(targetId);
 
@@ -370,8 +368,8 @@ crow::json::wvalue processSwipe(const std::string& sourceId, const std::string& 
         return crow::json::wvalue({{"error", "Invalid type parameter. Use 'roommate' or 'room'."}});
     }
 
-    auto& swipeColl  = (type == "roommate" ? db.getUserSwipeCollection() : db.getRoomSwipeCollection());
-    auto& targetColl = (type == "roommate" ? userColl : db.getRoomCollection());
+    auto swipeColl  = (type == "roommate" ? db.getUserSwipeCollection() : db.getRoomSwipeCollection());
+    auto targetColl = (type == "roommate" ? userColl : db.getRoomCollection());
 
     handleEntitySwipe(userColl, swipeColl, srcOid, tgtOid);
 
