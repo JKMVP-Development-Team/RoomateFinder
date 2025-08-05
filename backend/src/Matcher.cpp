@@ -301,74 +301,32 @@ crow::json::wvalue getRecommendations(const std::string& currentUserId, const st
 }
 
 /**
- * Fetches users who liked the given user.
- * @param userId The ID of the user to check likes for.
- * @return A JSON object containing the users who liked the specified user.
+ * Fetches users who liked a specific entity (user or room).
+ * @param entityId The ID of the entity to check likes for.
+ * @param type The type of entity ("roommate" or "room").
+ * @return A JSON object containing users who liked the entity.
  */
-crow::json::wvalue getUsersWhoLiked(const std::string& userId) {
-    auto& dbManager = getDbManager();
-    auto user_swipe_collection = dbManager.getUserSwipeCollection();
-    auto user_collection = dbManager.getUserCollection();
-
-    crow::json::wvalue result;
-    result["users"] = crow::json::wvalue::list();
-
-    try {
-        // Find all swipe documents where the user is the source
-        auto cursor = user_swipe_collection.find(
-            document{} << "sourceEntityId" << userId << finalize
-        );
-
-        for (auto&& swipe_doc : cursor) {
-            if (swipe_doc["targetEntityId"] && swipe_doc["targetEntityId"].type() == bsoncxx::type::k_array) {
-                for (auto&& oid_elem : swipe_doc["targetEntityId"].get_array().value) {
-                    std::string targetId = std::string(oid_elem.get_string().value);
-
-                    // Fetch user details from the user collection
-                    auto user_doc = user_collection.find_one(document{} << "_id" << bsoncxx::oid(targetId) << finalize);
-                    if (user_doc) {
-                        auto user_view = user_doc->view();
-                        crow::json::wvalue user;
-                        user["id"] = targetId;
-                        user["username"] = user_view["username"] ? std::string(user_view["username"].get_string().value) : "";
-                        user["popularity"] = user_view["popularity"] ? user_view["popularity"].get_double().value : 0.0;
-                        user["matches"] = user_view["matches"] ? user_view["matches"].get_int32().value : 0;
-
-                        result["users"][result["users"].size()] = std::move(user);
-                    }
-                }
-            }
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "Error fetching users who liked the user: " << e.what()
-                    << std::endl;
-        result["error"] = "Backend error: " + std::string(e.what());
+crow::json::wvalue getUserWhoLikedEntity(const std::string& entityId, const std::string& type) {
+    if (type != "roommate" && type != "room") {
+        return crow::json::wvalue({{"error", "Invalid type parameter. Use 'roommate' or 'room'."}});
     }
-    return result;
-}
 
-/**
- * Fetches users who liked the given room.
- * @param roomId The ID of the room to check likes for.
- * @return A JSON object containing the users who liked the specified room.
- */
-crow::json::wvalue getUsersWhoLikedRoom(const std::string& roomId) {
     auto& dbManager = getDbManager();
-    auto room_swipe_collection = dbManager.getRoomSwipeCollection();
+    auto swipe_collection = (type == "roommate") ? dbManager.getUserSwipeCollection() : dbManager.getRoomSwipeCollection();
     auto user_collection = dbManager.getUserCollection();
 
     crow::json::wvalue result;
     result["users"] = crow::json::wvalue::list();
 
     try {
-        // Find all swipe documents where the room is the target
-        auto cursor = room_swipe_collection.find(
-            document{} << "targetEntityId" << roomId << finalize
+        // Find all swipe documents where the entity is the target
+        auto cursor = swipe_collection.find(
+            document{} << "targetEntityId" << entityId << finalize
         );
 
         for (auto&& swipe_doc : cursor) {
-            auto swipe_view = swipe_doc;
-            std::string userId = std::string(swipe_doc["sourceEntityId"].get_string().value);
+            auto swipe_view = swipe_doc.view();
+            std::string userId = std::string(swipe_view["sourceEntityId"].get_string().value);
 
             // Fetch user details from the user collection
             auto user_doc = user_collection.find_one(document{} << "_id" << bsoncxx::oid(userId) << finalize);
@@ -384,13 +342,12 @@ crow::json::wvalue getUsersWhoLikedRoom(const std::string& roomId) {
             }
         }
     } catch (const std::exception& e) {
-        std::cerr << "Error fetching users who liked the room: " << e.what() << std::endl;
+        std::cerr << "Error fetching users who liked the entity: " << e.what()
+                    << std::endl;
         result["error"] = "Backend error: " + std::string(e.what());
     }
-
     return result;
 }
-
 
 
 

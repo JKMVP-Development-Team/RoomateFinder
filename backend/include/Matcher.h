@@ -29,6 +29,5 @@ double normalizeBudget(double budget);
 double normalizePopularity(double popularity, double minPopularity = 0.0, double maxPopularity = 100.0);
 // High-level API for main.cpp
 crow::json::wvalue getRecommendations(const std::string& currentUserId, const std::string& type);
-crow::json::wvalue getUsersWhoLikedRoom(const std::string& roomId);
-crow::json::wvalue getUsersWhoLiked(const std::string& userId);
+crow::json::wvalue getUserWhoLikedEntity(const std::string& entityId, const std::string& type);
 crow::json::wvalue processSwipe(const std::string& sourceId, const std::string& targetId, const std::string& type, bool isLike);
