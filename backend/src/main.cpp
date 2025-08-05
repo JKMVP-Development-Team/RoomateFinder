@@ -32,21 +32,12 @@ int main() {
         return crow::response(processSwipe(sourceId, targetId, type, isLike));
     });
 
-
-    // Get users who liked the room
-    CROW_ROUTE(app, "/api/room/likes").methods("GET"_method)
+    CROW_ROUTE(app, "/api/likes").methods("GET"_method)
     ([](const crow::request& req){
-        auto roomId = req.url_params.get("roomId");
-        if (!roomId) return crow::response(400, "Missing roomId parameter.");
-        return crow::response(getUsersWhoLikedRoom(roomId));
-    });
-
-    // Get roommates who liked the user
-    CROW_ROUTE(app, "/api/user/likes").methods("GET"_method)
-    ([](const crow::request& req){
-        auto userId = req.url_params.get("userId");
-        if (!userId) return crow::response(400, "Missing userId parameter.");
-        return crow::response(getUsersWhoLiked(userId));
+        auto id = req.url_params.get("id");
+        auto type = req.url_params.get("type");
+        if (!id || !type) return crow::response(400, "Missing id or type parameter.");
+        return crow::response(getUserWhoLikedEntity(id, type));
     });
 
     std::cout << "🟢 Backend starting on 0.0.0.0:18080\n";
