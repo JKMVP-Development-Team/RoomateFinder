@@ -49,8 +49,8 @@ COPY include/ ./include/
 
 # Configure + build
 RUN cmake -Bbuild -S. -DOCKER_BUILD=ON \
-    -DCMAKE_PREFIX_PATH=/usr/local \
-    && cmake --build build
+    -DCMAKE_PREFIX_PATH=/usr/local -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --config Release
 
 
 # Expose default Crow port (adjust if needed)
