@@ -14,9 +14,3 @@ Makefile
 
 # Logs
 *.log
-
-# vcpkg specific (optional)
-.vscode/
-
-#.env
-.env
