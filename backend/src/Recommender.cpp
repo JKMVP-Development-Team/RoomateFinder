@@ -13,7 +13,7 @@
 using mongocxx::collection;
 
 struct Profile {
-    std::string id, username, city, country, budget;
+    std::string id, username, city, country, budget, state, zipcode;
     std::vector<std::string> tokens; 
     // std::unordered_map<std::string, double> tfidf;
     // double popularity = 0.0;
