@@ -54,10 +54,6 @@ int main() {
         } catch (const std::exception& e) {
             return crow::response(500, std::string("Error: ") + e.what());
         }
-        auto id = req.url_params.get("id");
-        auto type = req.url_params.get("type");
-        if (!id || !type) return crow::response(400, "Missing id or type parameter.");
-        return crow::response(getUserWhoLikedEntity(id, type));
     });
 
     std::cout << "🟢 Backend starting on 0.0.0.0:18080\n";
