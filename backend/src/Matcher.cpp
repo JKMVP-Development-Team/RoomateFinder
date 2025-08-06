@@ -64,11 +64,8 @@ double calculatePopularity(int received, int made, int matches, double budget) {
 }
 
 
-/**
- * Fetches recommended roommates for the current user based on their preferences.
- * @param currentUserId The ID of the current user.
- * @return A JSON object containing recommended roommates.
- */
+
+// TODO: DUE For Deletion as it isn't used currently and is just a helper function
 bool swipeExists(mongocxx::collection& swipe_collection, const bsoncxx::oid& sourceEntityOid, const bsoncxx::oid& targetEntityOid) {
     auto swipe_doc = swipe_collection.find_one(document{} << "sourceEntityId" << sourceEntityOid.to_string() << finalize);
     if (!swipe_doc) return false;
@@ -214,7 +211,7 @@ void handleEntitySwipe(mongocxx::collection& source_collection,
 
 // --- High-level API Functions ---
 /**
- * Fetches recommended roommates or rooms for the current user based on their preferences.
+ * Fetches recommended roommates or rooms for the current user based on their location.
  * @param currentUserId The ID of the current user.
  * @param type The type of recommendation to fetch ("roommate" or "room").
  * @return A JSON object containing recommended roommates or rooms.
