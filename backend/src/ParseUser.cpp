@@ -8,6 +8,12 @@
 using namespace bsoncxx::builder::stream;
 using bsoncxx::oid;
 
+/**
+ * CURRENTLY UNUSED AS Recommender.cpp has its own fetchUserData function. 
+ * Either mark for deletion or use this class to get a specific user's data.
+ * This class is used to parse user data from the MongoDB collection.
+ */
+
 class ParseUser {
 private:
     mongocxx::collection& user_collection;
@@ -38,6 +44,7 @@ public:
             result["address_line"] =   user_view["address_line"]   ? std::string(user_view["address_line"].get_string().value) : "";
             result["zipcode"] =        user_view["zipcode"]        ? std::string(user_view["zipcode"].get_string().value) : "";
             result["city"] =           user_view["city"]           ? std::string(user_view["city"].get_string().value) : "";
+            result["state"] =          user_view["state"]          ? std::string(user_view["state"].get_string().value) : "";
             result["country"] =        user_view["country"]        ? std::string(user_view["country"].get_string().value) : "";
             result["budget"] =         user_view["budget"]         ? std::string(user_view["budget"].get_string().value) : "0.0";
             result["popularity"] =     user_view["popularity"]     ? user_view["popularity"].get_double().value : 0.0;
