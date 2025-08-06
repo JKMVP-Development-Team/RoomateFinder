@@ -1,5 +1,6 @@
 #include "crow/crow_all.h"
 #include "Matcher.h"
+#include "Recommender.h"
 
 int main() {
     crow::SimpleApp app;
@@ -38,6 +39,21 @@ int main() {
         auto type = req.url_params.get("type");
         if (!id || !type) return crow::response(400, "Missing id or type parameter.");
         return crow::response(getUserWhoLikedEntity(id, type));
+    });
+
+    // Testing Recommender
+    CROW_ROUTE(app, "/api/test_recommend").methods("GET"_method)
+    ([](const crow::request& req){
+        auto type = req.url_params.get("type");
+        if (!type) return crow::response(400, "Missing type parameter.");
+        auto userId = req.url_params.get("userId");
+        if (!userId) return crow::response(400, "Missing userId parameter.");
+
+        try {
+            return crow::response(rankUsers(userId, type));
+        } catch (const std::exception& e) {
+            return crow::response(500, std::string("Error: ") + e.what());
+        }
     });
 
     std::cout << "🟢 Backend starting on 0.0.0.0:18080\n";

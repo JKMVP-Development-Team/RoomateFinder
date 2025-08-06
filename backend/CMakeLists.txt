@@ -10,6 +10,8 @@ add_executable(roommateapp
     src/main.cpp
     src/Matcher.cpp
     src/DBManager.cpp
+    src/ParseUser.cpp
+    src/Recommender.cpp
 )
 
 # Add local headers (Crow + Asio)

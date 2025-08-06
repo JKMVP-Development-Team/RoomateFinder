@@ -23,5 +23,5 @@ crow::json::wvalue fetchUserInfo(const std::string& userId) {
     auto user_collection = dbManager.getUserCollection();
 
     ParseUser parser(user_collection);
-    return parser.getUserInfo(userId);
+    return parser.parse(userId);
 }
