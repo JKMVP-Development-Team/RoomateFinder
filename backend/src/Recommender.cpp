@@ -13,7 +13,7 @@
 using mongocxx::collection;
 
 struct Profile {
-    std::string id, username, city, country, budget, state, zipcode;
+    std::string id, city, country, budget, state, zipcode;
     std::vector<std::string> tokens; 
     // std::unordered_map<std::string, double> tfidf;
     // double popularity = 0.0;
@@ -94,7 +94,7 @@ crow::json::wvalue rankUsers(const std::string& targetId,
 
     // Document Frequency: Increment for each unique token across all profiles
     // Term Frequency: Count of each token in the profile
-    // Tokens that are currently accounted for are: username, city, state, country, zipcode, budget
+    // Tokens that are currently accounted for are: city, state, country, zipcode, budget
     std::unordered_map<std::string, int> DF;
     for (const auto& profile : profiles) {  
         std::unordered_set<std::string> seen;
@@ -180,7 +180,6 @@ crow::json::wvalue rankUsers(const std::string& targetId,
         auto [score,i] = similarities[idx];
         crow::json::wvalue obj;
         obj["userId"]   = profiles[i].id;
-        obj["username"] = profiles[i].username;
         obj["city"]     = profiles[i].city;
         obj["state"]    = profiles[i].state;
         obj["country"]  = profiles[i].country;
