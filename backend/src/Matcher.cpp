@@ -272,7 +272,9 @@ crow::json::wvalue getRecommendations(const std::string& currentUserId, const st
             entity["address"]      = doc["address"]      ? std::string(doc["address"]     .get_string().value) : "";
             entity["address_line"] = doc["address_line"] ? std::string(doc["address_line"].get_string().value) : "";
             entity["city"]         = doc["city"]         ? std::string(doc["city"]        .get_string().value) : "";
+            entity["state"]        = doc["state"]        ? std::string(doc["state"]       .get_string().value) : "";
             entity["country"]      = doc["country"]      ? std::string(doc["country"]     .get_string().value) : ""; 
+            entity["zipcode"]      = doc["zipcode"]      ? std::string(doc["zipcode"]     .get_string().value) : "";
             entity["phone"]        = doc["phone"]        ? std::string(doc["phone"]       .get_string().value) : "";
             entity["budget"]       = doc["budget"]       ? std::string(doc["budget"]      .get_string().value) : "0.0";
             entity["popularity"]   = norm_Pop;
