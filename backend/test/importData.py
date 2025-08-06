@@ -4,7 +4,7 @@ from pymongo import MongoClient
 from os import getenv
 
 def import_and_update(csv_path: str,
-                      mongo_uri: str = getenv("MONGODB_URI", "mongodb://localhost:27017/"),
+                      mongo_uri: str = getenv("MONGODB_URI"),
                       db_name: str = "roommatefinder",
                       coll_name: str = "users"):
     client = MongoClient(mongo_uri)
@@ -28,10 +28,12 @@ def import_and_update(csv_path: str,
 
         result = users.update_one(
             {"_id": doc["_id"]},
-            {"$set": update_fields}
+            {"$set": update_fields,
+             "$unset": { "lat": "", "long": "" }
+            }
         )
         print(f"_id={doc['_id']}  matched={result.matched_count}  modified={result.modified_count}")
 
 if __name__ == "__main__":
-    path = sys.argv[1] if len(sys.argv) > 1 else r".\\MOCK_DATA.csv"
+    path = sys.argv[1] if len(sys.argv) > 1 else r"backend\\test\\MOCK_DATA.csv"
     import_and_update(path)
