@@ -35,7 +35,10 @@ static std::vector<std::string> tokenize(const std::string& text) {
     return out;
 }
 
-
+/**
+ * Fetches user data from the database and tokenizes it for the recommender system.
+ * @return A vector of Profile objects containing user data.
+ */
 static std::vector<Profile> fetchUserData() {
     try{
         auto& db = getDbManager();
@@ -46,7 +49,6 @@ static std::vector<Profile> fetchUserData() {
             Profile profile;
             profile.id = doc["_id"].get_oid().value.to_string();
 
-            profile.username =  doc["username"] ? std::string(doc["username"].get_string().value) : "";
             profile.city =      doc["city"]     ? std::string(doc["city"].get_string().value) : "";
             profile.state =     doc["state"]    ? std::string(doc["state"].get_string().value) : "";
             profile.country =   doc["country"]  ? std::string(doc["country"].get_string().value) : "";
@@ -55,7 +57,11 @@ static std::vector<Profile> fetchUserData() {
             
             // TODO - Cap the number of tokens to more recent ones using timestamps
             // TODO - Add preferences and interests to the recommender system
-            std::string all = profile.username + " " + profile.city + " " + profile.country + " " + profile.budget;
+            std::string all = profile.city + " " +
+                              profile.state + " " +
+                              profile.country + " " +
+                              profile.zipcode + " " +
+                              profile.budget;
             profile.tokens = tokenize(all);
             profiles.push_back(std::move(profile));
         }
@@ -67,9 +73,11 @@ static std::vector<Profile> fetchUserData() {
 }
 
 /**
- * Rank Users Based on Cosine Similarity between Their Profiles
- * @param profiles List of user profiles to rank
- * @return A JSON object containing ranked user profiles
+ * Ranks users based on their similarity to a target user using TF-IDF and cosine similarity.
+ * @param targetId The ID of the target user.
+ * @param type The type of recommendation (currently only "roommate" is supported).
+ * @param maxResults The maximum number of results to return.
+ * @return A JSON object containing ranked user recommendations.
  */
 crow::json::wvalue rankUsers(const std::string& targetId,
                              const std::string& type,
@@ -80,9 +88,13 @@ crow::json::wvalue rankUsers(const std::string& targetId,
     }
 
     auto profiles = fetchUserData();
-    size_t N = profiles.size();
+    size_t N_Docs = profiles.size();
 
-    // Document Frequency
+    // SOURCE: https://www.learndatasci.com/glossary/tf-idf-term-frequency-inverse-document-frequency/#pdatablockkeyydefePythonImplementationp
+
+    // Document Frequency: Increment for each unique token across all profiles
+    // Term Frequency: Count of each token in the profile
+    // Tokens that are currently accounted for are: username, city, state, country, zipcode, budget
     std::unordered_map<std::string, int> DF;
     for (const auto& profile : profiles) {  
         std::unordered_set<std::string> seen;
@@ -93,15 +105,17 @@ crow::json::wvalue rankUsers(const std::string& targetId,
         }
     }
 
-    // Inverse Document Frequency
+    // Inverse Document Frequency: Calculating the proportion of documents in the profiles that contain each token
+    // IDF = log((N + 1) / (DF + 1)) + 1 to avoid division by zero and smoothing
     std::unordered_map<std::string, double> IDF;
     for (const auto& [token, count] : DF) {
-        IDF[token] = std::log((double)(N + 1) / (count + 1)) + 1;
+        IDF[token] = std::log((double)(N_Docs + 1) / (count + 1)) + 1;
     }
 
-    // Calculate TF-IDF for each profile
-    std::vector<std::unordered_map<std::string, double>> V(N);
-    for (size_t i = 0; i < N; ++i) {
+    // Calculate TF-IDF for each profile: Multiply term frequency by inverse document frequency
+    // Importance of a term for 
+    std::vector<std::unordered_map<std::string, double>> V(N_Docs);
+    for (size_t i = 0; i < N_Docs; ++i) {
         std::unordered_map<std::string, int> TF;
 
         // Calculate Term Frequency
@@ -112,9 +126,9 @@ crow::json::wvalue rankUsers(const std::string& targetId,
             V[i][token] = count * IDF[token];
     }
 
-    // Nomalize vectors
-    std::vector<double> norms(N, 0.0);
-    for (size_t i=0; i<N; ++i) {
+    // Nomalize vectors using Euclidean norm 
+    std::vector<double> norms(N_Docs, 0.0);
+    for (size_t i=0; i<N_Docs; ++i) {
         double sum = 0;
         for (auto& [w,val] : V[i]) sum += val*val;
         norms[i] = std::sqrt(sum);
@@ -122,7 +136,7 @@ crow::json::wvalue rankUsers(const std::string& targetId,
 
     // Target Idex
     int targetIndex = -1;
-    for (int i = 0; i < N; ++i) {
+    for (int i = 0; i < N_Docs; ++i) {
         if (profiles[i].id == targetId) {
             targetIndex = i;
             break;
@@ -133,18 +147,25 @@ crow::json::wvalue rankUsers(const std::string& targetId,
         throw std::invalid_argument("Target user not found");
     }
 
-    // Calculate cosine similarity
+    // Calculate cosine similarity Source: https://www.learndatasci.com/glossary/cosine-similarity
+    // There is no library for cosine similarity in C++ standard library, so we implement it manually
+    // Similarity = (A . B) / (||A|| * ||B||)
+    // where ||A|| and ||B|| are the Euclidean norms of vectors A and B, respectively.
+    // A . B is the dot product of vectors A and B
     std::vector<std::pair<double, int>> similarities;
-    for (int i = 0; i < N; ++i) {
+    for (int i = 0; i < N_Docs; ++i) {
         if (i == targetIndex) continue;
 
         double dotProduct = 0.0;
         for (const auto& [token, val] : V[targetIndex]) {
+            // Try to find the same token in the i-th user’s TF-IDF map
             auto it = V[i].find(token);
             if (it != V[i].end())
+                // If present, multiply the two weights and add to the running sum
                 dotProduct += val * it->second;
         }
 
+        // Calculate cosine similarity if both norms are non-zero
         double similarity = (norms[targetIndex] && norms[i])
                      ? dotProduct/(norms[targetIndex]*norms[i])
                      : 0.0;
@@ -161,10 +182,15 @@ crow::json::wvalue rankUsers(const std::string& targetId,
         obj["userId"]   = profiles[i].id;
         obj["username"] = profiles[i].username;
         obj["city"]     = profiles[i].city;
+        obj["state"]    = profiles[i].state;
         obj["country"]  = profiles[i].country;
+        obj["zipcode"]  = profiles[i].zipcode;
         obj["budget"]   = profiles[i].budget;
         obj["score"]    = score;
         result["recommendations"][idx] = std::move(obj);
+
+        // TODO - Add more user information like preferences, interests, etc.
+        // TODO - Sort by popularity as well
     }
 
     return result;
