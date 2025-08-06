@@ -45,13 +45,17 @@ static std::vector<Profile> fetchUserData() {
         for (auto&& doc : user_collection.find({})) {
             Profile profile;
             profile.id = doc["_id"].get_oid().value.to_string();
-            profile.username = std::string(doc["username"].get_string().value);
-            profile.city = std::string(doc["city"].get_string().value);
-            profile.country = std::string(doc["country"].get_string().value);
-            profile.budget = std::string(doc["budget"].get_string().value);
 
+            profile.username =  doc["username"] ? std::string(doc["username"].get_string().value) : "";
+            profile.city =      doc["city"]     ? std::string(doc["city"].get_string().value) : "";
+            profile.state =     doc["state"]    ? std::string(doc["state"].get_string().value) : "";
+            profile.country =   doc["country"]  ? std::string(doc["country"].get_string().value) : "";
+            profile.zipcode =   doc["zipcode"]  ? std::string(doc["zipcode"].get_string().value) : "";
+            profile.budget =    doc["budget"]   ? std::string(doc["budget"].get_string().value) : "";
+            
             // TODO - Cap the number of tokens to more recent ones using timestamps
-            std::string all = profile.username + " " + profile.city;
+            // TODO - Add preferences and interests to the recommender system
+            std::string all = profile.username + " " + profile.city + " " + profile.country + " " + profile.budget;
             profile.tokens = tokenize(all);
             profiles.push_back(std::move(profile));
         }
@@ -157,6 +161,8 @@ crow::json::wvalue rankUsers(const std::string& targetId,
         obj["userId"]   = profiles[i].id;
         obj["username"] = profiles[i].username;
         obj["city"]     = profiles[i].city;
+        obj["country"]  = profiles[i].country;
+        obj["budget"]   = profiles[i].budget;
         obj["score"]    = score;
         result["recommendations"][idx] = std::move(obj);
     }
