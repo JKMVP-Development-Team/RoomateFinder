@@ -22,7 +22,7 @@ using bsoncxx::builder::stream::close_document;
  * @return A normalized budget value between 0.0 and 1.0.
  */
 // TODO: Adjust the min and max budget values
-double normalizeBudget(double budget) {
+static double normalizeBudget(double budget) {
     double minBudget = 500.0;
     double maxBudget = 100000.0;
     return (budget - minBudget) / (maxBudget - minBudget); // Result: 0.0 to 1.0
@@ -35,7 +35,7 @@ double normalizeBudget(double budget) {
  * @param maxPopularity The maximum possible popularity score.
  * @return A normalized popularity score between 0.0 and 1.0.
  */
-double normalizePopularity(double popularity, double minPopularity = -50, double maxPopularity = 3200) {
+static double normalizePopularity(double popularity, double minPopularity = -50, double maxPopularity = 3200) {
     if (maxPopularity == minPopularity) return 0.0;
     return std::max(0.0, std::min(1.0, (popularity - minPopularity) / (maxPopularity - minPopularity)));
 }
@@ -48,7 +48,7 @@ double normalizePopularity(double popularity, double minPopularity = -50, double
  * @param budget The budget of the entity.
  * @return A calculated popularity score.
  */
-double calculatePopularity(int received, int made, int matches, double budget) {
+static double calculatePopularity(int received, int made, int matches, double budget) {
     // Adjust weights for each factor based on their importance
     // TODO: Train the data based on data to a machine learning model for a popularity score
     double w_received = 1.0;
@@ -66,22 +66,22 @@ double calculatePopularity(int received, int made, int matches, double budget) {
 
 
 // TODO: DUE For Deletion as it isn't used currently and is just a helper function
-bool swipeExists(mongocxx::collection& swipe_collection, const bsoncxx::oid& sourceEntityOid, const bsoncxx::oid& targetEntityOid) {
-    auto swipe_doc = swipe_collection.find_one(document{} << "sourceEntityId" << sourceEntityOid.to_string() << finalize);
-    if (!swipe_doc) return false;
+// bool swipeExists(mongocxx::collection& swipe_collection, const bsoncxx::oid& sourceEntityOid, const bsoncxx::oid& targetEntityOid) {
+//     auto swipe_doc = swipe_collection.find_one(document{} << "sourceEntityId" << sourceEntityOid.to_string() << finalize);
+//     if (!swipe_doc) return false;
 
-    auto view = swipe_doc->view();
-    if (view["targetEntityId"]) {
-        auto target_array = view["targetEntityId"].get_array().value;
-        for (auto&& oid_elem : target_array) {
-            std::string target_id = std::string(oid_elem.get_string().value);
-            if (target_id == targetEntityOid.to_string()) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
+//     auto view = swipe_doc->view();
+//     if (view["targetEntityId"]) {
+//         auto target_array = view["targetEntityId"].get_array().value;
+//         for (auto&& oid_elem : target_array) {
+//             std::string target_id = std::string(oid_elem.get_string().value);
+//             if (target_id == targetEntityOid.to_string()) {
+//                 return true;
+//             }
+//         }
+//     }
+//     return false;
+// }
 
 
 
@@ -91,7 +91,7 @@ bool swipeExists(mongocxx::collection& swipe_collection, const bsoncxx::oid& sou
  * @param entityOid The OID of the entity to update.
  * @param proximity The proximity score of the entity.
  */
-void updateEntityPopularity(mongocxx::collection& entity_collection, const bsoncxx::oid& entityOid) {
+static void updateEntityPopularity(mongocxx::collection& entity_collection, const bsoncxx::oid& entityOid) {
     auto maybe_entity = entity_collection.find_one(document{} << "_id" << entityOid << finalize);
     if (!maybe_entity) {
         std::cerr << "Entity not found: " << entityOid.to_string() << std::endl;
@@ -133,7 +133,7 @@ void updateEntityPopularity(mongocxx::collection& entity_collection, const bsonc
  * @param sourceEntityOid The OID of the source entity.
  * @param targetEntityOid The OID of the target entity.
  */
-void updateEntityMatches(mongocxx::collection& source_collection,
+static void updateEntityMatches(mongocxx::collection& source_collection,
                          mongocxx::collection& target_collection,
                          const bsoncxx::oid& sourceEntityOid,
                          const bsoncxx::oid& targetEntityOid) {
@@ -154,7 +154,7 @@ void updateEntityMatches(mongocxx::collection& source_collection,
  * @param sourceEntityOid The OID of the source entity.
  * @param targetEntityOid The OID of the target entity.
  */
-void handleEntityLike(mongocxx::collection& source_collection,
+static void handleEntityLike(mongocxx::collection& source_collection,
                       mongocxx::collection& target_collection,
                       mongocxx::collection& swipe_collection,
                       const bsoncxx::oid& sourceEntityOid,
@@ -180,7 +180,7 @@ void handleEntityLike(mongocxx::collection& source_collection,
  * @param sourceEntityOid The OID of the source entity.
  * @param targetEntityOid The OID of the target entity.
  */
-void handleEntitySwipe(mongocxx::collection& source_collection,
+static void handleEntitySwipe(mongocxx::collection& source_collection,
                         mongocxx::collection& swipe_collection,
                         const bsoncxx::oid& sourceEntityOid,
                         const bsoncxx::oid& targetEntityOid) {
