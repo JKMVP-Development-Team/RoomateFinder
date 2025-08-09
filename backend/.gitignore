@@ -14,3 +14,4 @@ Makefile
 
 # Logs
 *.log
+test/*.csv
