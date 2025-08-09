@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Profile.h"
 #include <mongocxx/client.hpp>
 #include <mongocxx/database.hpp>
 #include <mongocxx/collection.hpp>
@@ -19,3 +20,4 @@ private:
 
 DBManager& getDbManager();
 crow::json::wvalue fetchUserInfo(const std::string& userId);
+crow::json::wvalue (const std::string& userId)

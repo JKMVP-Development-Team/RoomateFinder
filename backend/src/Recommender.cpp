@@ -1,5 +1,6 @@
 #include "Recommender.h"
 #include "DBManager.h"
+#include "Profile.h"
 
 #include <crow/crow_all.h>
 #include <bsoncxx/oid.hpp>
@@ -12,12 +13,6 @@
 
 using mongocxx::collection;
 
-struct Profile {
-    std::string id, city, country, budget, state, zipcode;
-    std::vector<std::string> tokens; 
-    // std::unordered_map<std::string, double> tfidf;
-    // double popularity = 0.0;
-};
 
 /**
  * Tokenizes a string into words, converting them to lowercase.
@@ -35,42 +30,110 @@ static std::vector<std::string> tokenize(const std::string& text) {
     return out;
 }
 
+
+
 /**
- * Fetches user data from the database and tokenizes it for the recommender system.
- * @return A vector of Profile objects containing user data.
+ * Calculates the document frequency for each token across all profiles.
+ * This is used to compute the inverse document frequency (IDF) for TF-IDF.
+ * @param profiles A vector of Profile objects containing user data.
+ * @return A map where keys are tokens and values are their document frequencies.
  */
-static std::vector<Profile> fetchUserData() {
-    try{
-        auto& db = getDbManager();
-        auto user_collection = db.getUserCollection();
-        std::vector<Profile> profiles;
+static std::unordered_map<std::string, int> documentFrequency(const std::vector<Profile>& profiles) {
+    // SOURCE: https://www.learndatasci.com/glossary/tf-idf-term-frequency-inverse-document-frequency/#pdatablockkeyydefePythonImplementationp
 
-        for (auto&& doc : user_collection.find({})) {
-            Profile profile;
-            profile.id = doc["_id"].get_oid().value.to_string();
-
-            profile.city =      doc["city"]     ? std::string(doc["city"].get_string().value) : "";
-            profile.state =     doc["state"]    ? std::string(doc["state"].get_string().value) : "";
-            profile.country =   doc["country"]  ? std::string(doc["country"].get_string().value) : "";
-            profile.zipcode =   doc["zipcode"]  ? std::string(doc["zipcode"].get_string().value) : "";
-            profile.budget =    doc["budget"]   ? std::string(doc["budget"].get_string().value) : "";
-            
-            // TODO - Cap the number of tokens to more recent ones using timestamps
-            // TODO - Add preferences and interests to the recommender system
-            std::string all = profile.city + " " +
-                              profile.state + " " +
-                              profile.country + " " +
-                              profile.zipcode + " " +
-                              profile.budget;
-            profile.tokens = tokenize(all);
-            profiles.push_back(std::move(profile));
+    // Document Frequency: Increment for each unique token across all profiles
+    // Term Frequency: Count of each token in the profile
+    // Tokens that are currently accounted for are: city, state, country, zipcode, budget
+    std::unordered_map<std::string, int> DF;
+    for (const auto& profile : profiles) {
+        std::unordered_set<std::string> seen;
+        for (const auto& token : profile.tokens) {
+            if (seen.insert(token).second) {
+                DF[token]++;
+            }
         }
-        return profiles;
-    } catch (const std::exception& e) {
-        std::cerr << "Error fetching user data: " << e.what() << std::endl;
-        throw std::runtime_error("Failed to fetch user data");
     }
+    return DF;
 }
+
+// Inverse Document Frequency: Calculating the proportion of documents in the profiles that contain each token
+// IDF = log((N + 1) / (DF + 1)) + 1 to avoid division by zero and smoothing
+static std::unordered_map<std::string, double> inverseDocumentFrequency(const std::unordered_map<std::string, int>& DF, size_t N_Docs) {
+    std::unordered_map<std::string, double> IDF;
+    for (const auto& [token, count] : DF) {
+        IDF[token] = std::log((double)(N_Docs + 1) / (count + 1)) + 1; // Smoothing
+    }
+    return IDF;
+}
+
+static std::vector<std::unordered_map<std::string, double>> TF_IDF(const std::vector<Profile>& profiles) {
+    size_t N_Docs = profiles.size();
+    auto DF = documentFrequency(profiles);
+    auto IDF = inverseDocumentFrequency(DF, N_Docs);
+
+    // Calculate TF-IDF for each profile: Multiply term frequency by inverse document frequency
+    std::vector<std::unordered_map<std::string, double>> V(N_Docs);
+    for (size_t i = 0; i < N_Docs; ++i) {
+        std::unordered_map<std::string, int> TF;
+
+        // Calculate Term Frequency
+        for (const auto& token : profiles[i].tokens) 
+            TF[token]++;
+        // Calculate TF-IDF
+        for (const auto& [token, count] : TF) 
+            V[i][token] = count * IDF[token];
+    }
+    return V;
+}
+
+
+
+// Normalizes a vector by dividing each element by the Euclidean norm of the vector.
+static std::vector<double> normalizeVector(const std::unordered_map<std::string, double>& vec) {
+    double sum = 0.0;
+    for (const auto& [_, val] : vec) {
+        sum += val * val;
+    }
+    double norm = std::sqrt(sum);
+    std::vector<double> normalized;
+    for (const auto& [_, val] : vec) {
+        normalized.push_back(val / norm);
+    }
+    return normalized;
+}
+
+// Calculate cosine similarity Source: https://www.learndatasci.com/glossary/cosine-similarity
+// There is no library for cosine similarity in C++ standard library, so we implement it manually
+// Similarity = (A . B) / (||A|| * ||B||)
+// where ||A|| and ||B|| are the Euclidean norms of vectors A and B, respectively.
+// A . B is the dot product of vectors A and B
+static std::vector<std::pair<double, int>> cosineSimilarity(
+    const std::vector<std::unordered_map<std::string, double>>& V,
+    const std::vector<double>& norms,
+    int targetIndex) {
+    
+    size_t N_Docs = V.size();
+    std::vector<std::pair<double, int>> similarities;
+
+    for (int i = 0; i < N_Docs; ++i) {
+        if (i == targetIndex) continue;
+
+        double dotProduct = 0.0;
+        for (const auto& [token, val] : V[targetIndex]) {
+            auto it = V[i].find(token);
+            if (it != V[i].end())
+                dotProduct += val * it->second;
+        }
+
+        double similarity = (norms[targetIndex] && norms[i])
+                     ? dotProduct/(norms[targetIndex]*norms[i])
+                     : 0.0;
+        similarities.emplace_back(similarity, i);
+    }
+    return similarities;
+}
+
+
 
 /**
  * Ranks users based on their similarity to a target user using TF-IDF and cosine similarity.
@@ -90,49 +153,7 @@ crow::json::wvalue rankUsers(const std::string& targetId,
     auto profiles = fetchUserData();
     size_t N_Docs = profiles.size();
 
-    // SOURCE: https://www.learndatasci.com/glossary/tf-idf-term-frequency-inverse-document-frequency/#pdatablockkeyydefePythonImplementationp
-
-    // Document Frequency: Increment for each unique token across all profiles
-    // Term Frequency: Count of each token in the profile
-    // Tokens that are currently accounted for are: city, state, country, zipcode, budget
-    std::unordered_map<std::string, int> DF;
-    for (const auto& profile : profiles) {  
-        std::unordered_set<std::string> seen;
-        for (auto& token : profile.tokens) {
-            if (seen.insert(token).second) {
-                DF[token]++;
-            }
-        }
-    }
-
-    // Inverse Document Frequency: Calculating the proportion of documents in the profiles that contain each token
-    // IDF = log((N + 1) / (DF + 1)) + 1 to avoid division by zero and smoothing
-    std::unordered_map<std::string, double> IDF;
-    for (const auto& [token, count] : DF) {
-        IDF[token] = std::log((double)(N_Docs + 1) / (count + 1)) + 1;
-    }
-
-    // Calculate TF-IDF for each profile: Multiply term frequency by inverse document frequency
-    // Importance of a term for 
-    std::vector<std::unordered_map<std::string, double>> V(N_Docs);
-    for (size_t i = 0; i < N_Docs; ++i) {
-        std::unordered_map<std::string, int> TF;
-
-        // Calculate Term Frequency
-        for (auto& token : profiles[i].tokens) 
-            TF[token]++;
-        // Calculate TF-IDF
-        for (auto& [token, count] : TF) 
-            V[i][token] = count * IDF[token];
-    }
-
-    // Nomalize vectors using Euclidean norm 
-    std::vector<double> norms(N_Docs, 0.0);
-    for (size_t i=0; i<N_Docs; ++i) {
-        double sum = 0;
-        for (auto& [w,val] : V[i]) sum += val*val;
-        norms[i] = std::sqrt(sum);
-    }
+    auto norm = normalizeVector(TF_IDF(profiles));
 
     // Target Idex
     int targetIndex = -1;
@@ -147,31 +168,7 @@ crow::json::wvalue rankUsers(const std::string& targetId,
         throw std::invalid_argument("Target user not found");
     }
 
-    // Calculate cosine similarity Source: https://www.learndatasci.com/glossary/cosine-similarity
-    // There is no library for cosine similarity in C++ standard library, so we implement it manually
-    // Similarity = (A . B) / (||A|| * ||B||)
-    // where ||A|| and ||B|| are the Euclidean norms of vectors A and B, respectively.
-    // A . B is the dot product of vectors A and B
-    std::vector<std::pair<double, int>> similarities;
-    for (int i = 0; i < N_Docs; ++i) {
-        if (i == targetIndex) continue;
-
-        double dotProduct = 0.0;
-        for (const auto& [token, val] : V[targetIndex]) {
-            // Try to find the same token in the i-th user’s TF-IDF map
-            auto it = V[i].find(token);
-            if (it != V[i].end())
-                // If present, multiply the two weights and add to the running sum
-                dotProduct += val * it->second;
-        }
-
-        // Calculate cosine similarity if both norms are non-zero
-        double similarity = (norms[targetIndex] && norms[i])
-                     ? dotProduct/(norms[targetIndex]*norms[i])
-                     : 0.0;
-        similarities.emplace_back(similarity, i);
-    }
-
+    auto similarities = cosineSimilarity(V, norm, targetIndex);
     std::sort(similarities.begin(), similarities.end(), [](auto &a, auto &b){ return a.first > b.first; });
 
     crow::json::wvalue result;
