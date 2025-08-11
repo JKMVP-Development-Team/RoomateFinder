@@ -1,0 +1,31 @@
+.swipe-card {
+  border: 1px solid #ccc;
+  border-radius: 10px;
+  padding: 1rem;
+  max-width: 300px;
+  background: white;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+  margin: auto;
+}
+
+.swipe-card h2 {
+  margin: 0 0 0.5rem 0;
+}
+
+.swipe-card button {
+  padding: 0.5rem 1rem;
+  border-radius: 5px;
+  border: none;
+  color: white;
+  cursor: pointer;
+}
+
+.swipe-card button.like {
+  background: green;
+  margin-left: 0.5rem;
+}
+
+.swipe-card button.dislike {
+  background: red;
+  margin-right: 0.5rem;
+}
