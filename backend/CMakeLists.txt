@@ -8,10 +8,6 @@ option(DOCKER_BUILD "Build for Docker" OFF)
 
 add_executable(roommateapp
     src/main.cpp
-    src/Matcher.cpp
-    src/DBManager.cpp
-    src/ParseUser.cpp
-    src/Recommender.cpp
 )
 
 # Add local headers (Crow + Asio)
@@ -19,22 +15,13 @@ target_include_directories(roommateapp PRIVATE
     src
     include
     include/asio
-    ${LIBMONGOCXX_INCLUDE_DIRS}
-    ${LIBBSONCXX_INCLUDE_DIRS}
+    C:/vcpkg/installed/x64-windows/include
 )
 
+find_package(mongocxx REQUIRED CONFIG)
+find_package(bsoncxx REQUIRED CONFIG)
 
-if(DOCKER_BUILD)
-    find_package(libmongocxx REQUIRED)
-    find_package(libbsoncxx REQUIRED)
-    target_link_libraries(roommateapp PRIVATE
-        ${LIBMONGOCXX_LIBRARIES}
-        ${LIBBSONCXX_LIBRARIES}
-    )
-else()
-    find_package(bsoncxx CONFIG REQUIRED)
-    target_link_libraries(roommateapp PRIVATE $<IF:$<TARGET_EXISTS:mongo::bsoncxx_static>,mongo::bsoncxx_static,mongo::bsoncxx_shared>)
-
-    find_package(mongocxx CONFIG REQUIRED)
-    target_link_libraries(roommateapp PRIVATE $<IF:$<TARGET_EXISTS:mongo::mongocxx_static>,mongo::mongocxx_static,mongo::mongocxx_shared>)
-endif()
+target_link_libraries(roommateapp PRIVATE
+    mongo::mongocxx_shared
+    mongo::bsoncxx_shared
+)
